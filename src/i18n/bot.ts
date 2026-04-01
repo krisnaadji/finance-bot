@@ -1,0 +1,126 @@
+import { Lang } from '../utils/lang';
+
+type BotStrings = {
+  txnCreated: (
+    desc: string,
+    amount: string,
+    cat: string,
+    date: string,
+    type: string,
+  ) => string;
+  txnEdited: string;
+  txnDeleted: string;
+  txnDeleteCancel: string;
+  deleteConfirm: (
+    desc: string,
+    amount: string,
+    cat: string,
+    date: string,
+  ) => string;
+  notSetup: string;
+  setupOk: (name: string) => string;
+  setupBadCode: string;
+  langChanged: (lang: string) => string;
+  helpText: string;
+};
+
+export const t: Record<Lang, BotStrings> = {
+  id: {
+    txnCreated: (desc, amount, cat, date, type) =>
+      (type === 'income' ? '💰' : '💸') +
+      ' *Tercatat!*\n' +
+      desc +
+      '\n' +
+      (type === 'income' ? '+' : '-') +
+      'Rp' +
+      amount +
+      ' · ' +
+      cat +
+      '\n' +
+      '📅 ' +
+      date +
+      '\n\n_Balas pesan ini untuk edit atau hapus_',
+    txnEdited: '✅ Transaksi berhasil diperbarui!',
+    txnDeleted: '🗑️ Transaksi berhasil dihapus.',
+    txnDeleteCancel: '❌ Penghapusan dibatalkan.',
+    deleteConfirm: (desc, amount, cat, date) =>
+      '⚠️ *Yakin ingin menghapus transaksi ini?*\n' +
+      desc +
+      ' · Rp' +
+      amount +
+      ' · ' +
+      cat +
+      '\n📅 ' +
+      date +
+      '\n\n' +
+      'Balas *ya* untuk hapus, *tidak* untuk batal.\n_(Hangus dalam 60 detik)_',
+    notSetup:
+      'Halo! Bot belum dikonfigurasi untuk chat ini.\nBuka dashboard, buat akun, lalu kirim:\n*/setup KODE*',
+    setupOk: (name) =>
+      '✅ *Akun berhasil dihubungkan!*\nNama: *' +
+      name +
+      '*\n\nContoh:\n_makan siang 35k_\n_gaji masuk 5jt_',
+    setupBadCode:
+      '❌ Kode tidak valid atau sudah kadaluarsa. Buat kode baru di dashboard.',
+    langChanged: (lang) =>
+      '✅ Bahasa diubah ke ' +
+      (lang === 'id' ? 'Bahasa Indonesia' : 'English') +
+      '.',
+    helpText:
+      '📖 *Perintah tersedia:*\n' +
+      '/setup KODE [en|id] — hubungkan akun\n' +
+      '/language id|en — ganti bahasa\n' +
+      '/rekap — ringkasan bulan ini\n' +
+      '/kategori — lihat semua kategori\n' +
+      '/help — tampilkan bantuan ini',
+  },
+  en: {
+    txnCreated: (desc, amount, cat, date, type) =>
+      (type === 'income' ? '💰' : '💸') +
+      ' *Recorded!*\n' +
+      desc +
+      '\n' +
+      (type === 'income' ? '+' : '-') +
+      'Rp' +
+      amount +
+      ' · ' +
+      cat +
+      '\n' +
+      '📅 ' +
+      date +
+      '\n\n_Reply to this message to edit or delete_',
+    txnEdited: '✅ Transaction updated successfully!',
+    txnDeleted: '🗑️ Transaction deleted.',
+    txnDeleteCancel: '❌ Deletion cancelled.',
+    deleteConfirm: (desc, amount, cat, date) =>
+      '⚠️ *Delete this transaction?*\n' +
+      desc +
+      ' · Rp' +
+      amount +
+      ' · ' +
+      cat +
+      '\n📅 ' +
+      date +
+      '\n\n' +
+      'Reply *yes* to confirm, *no* to cancel.\n_(Expires in 60 seconds)_',
+    notSetup:
+      'Hi! This bot is not configured for this chat.\nOpen the dashboard, create an account, then send:\n*/setup CODE*',
+    setupOk: (name) =>
+      '✅ *Account linked!*\nName: *' +
+      name +
+      '*\n\nExamples:\n_lunch 35k_\n_received salary 5jt_',
+    setupBadCode:
+      '❌ Invalid or expired code. Generate a new one from the dashboard.',
+    langChanged: (lang) =>
+      '✅ Language changed to ' +
+      (lang === 'en' ? 'English' : 'Bahasa Indonesia') +
+      '.',
+    helpText:
+      '📖 *Available commands:*\n' +
+      '/setup CODE [en|id] — link account\n' +
+      '/language id|en — change language\n' +
+      '/rekap — this month summary\n' +
+      '/kategori — list categories\n' +
+      '/help — show this help',
+  },
+};
