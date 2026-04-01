@@ -1,3 +1,5 @@
+import { Lang } from './lang';
+
 // Format number as Indonesian rupiah: 35000 → '35.000'
 export function formatIDR(amount: number): string {
   return amount.toLocaleString('id-ID');
@@ -5,9 +7,9 @@ export function formatIDR(amount: number): string {
 
 // Format date for WA display based on language
 // 2026-03-27 → '27 Mar 2026' (id) or 'Mar 27, 2026' (en)
-export function formatDate(dateStr: string): string {
+export function formatDate(dateStr: string, lang: Lang = 'id'): string {
   const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('id-ID', {
+  return d.toLocaleDateString(lang === 'id' ? 'id-ID' : 'en-US', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
