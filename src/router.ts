@@ -80,7 +80,8 @@ export async function routeMessage(msg: IncomingMessage) {
   }
 
   const account = await getAccountByChatId(msg.chatId);
-  if (!account) return sendWA(msg.chatId, t['id'].notSetup);
+  const dashboardUrl = process.env.DASHBOARD_URL ?? '';
+  if (!account) return sendWA(msg.chatId, t['id'].notSetup(dashboardUrl));
 
   // Resolve language once — passed to all handlers
   const memberPref = await getMemberLangPref(account.id, msg.rawFrom);

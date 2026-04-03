@@ -20,7 +20,8 @@ export async function setup(
     .gt('expires_at', new Date().toISOString())
     .single();
 
-  if (!linkCode) return sendWA(msg.chatId, t['id'].setupBadCode);
+  const dashboardUrl = process.env.DASHBOARD_URL ?? '';
+  if (!linkCode) return sendWA(msg.chatId, t['id'].setupBadCode(dashboardUrl));
 
   const lang: Lang = SUPPORTED_LANGS.includes(langArg as Lang)
     ? (langArg as Lang)

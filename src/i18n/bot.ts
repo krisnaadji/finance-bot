@@ -17,9 +17,9 @@ type BotStrings = {
     cat: string,
     date: string,
   ) => string;
-  notSetup: string;
+  notSetup: (url: string) => string;
   setupOk: (name: string) => string;
-  setupBadCode: string;
+  setupBadCode: (url: string) => string;
   langChanged: (lang: string) => string;
   helpText: string;
 };
@@ -54,14 +54,22 @@ export const t: Record<Lang, BotStrings> = {
       date +
       '\n\n' +
       'Balas *ya* untuk hapus, *tidak* untuk batal.\n_(Hangus dalam 60 detik)_',
-    notSetup:
-      'Halo! Bot belum dikonfigurasi untuk chat ini.\nBuka dashboard, buat akun, lalu kirim:\n*/setup KODE*',
+    notSetup: (url: string) =>
+      'Halo! Bot belum dikonfigurasi untuk chat ini.\n' +
+      'Buka dashboard untuk membuat akun dan dapatkan kode setup:\n' +
+      '*' +
+      url +
+      '*\n\n' +
+      'Setelah dapat kode, kirim:\n*/setup KODE*',
     setupOk: (name) =>
       '✅ *Akun berhasil dihubungkan!*\nNama: *' +
       name +
       '*\n\nContoh:\n_makan siang 35k_\n_gaji masuk 5jt_',
-    setupBadCode:
-      '❌ Kode tidak valid atau sudah kadaluarsa. Buat kode baru di dashboard.',
+    setupBadCode: (url: string) =>
+      '❌ Kode tidak valid atau sudah kadaluarsa.\n' +
+      'Buat kode baru di dashboard:\n*' +
+      url +
+      '*',
     langChanged: (lang) =>
       '✅ Bahasa diubah ke ' +
       (lang === 'id' ? 'Bahasa Indonesia' : 'English') +
@@ -103,14 +111,22 @@ export const t: Record<Lang, BotStrings> = {
       date +
       '\n\n' +
       'Reply *yes* to confirm, *no* to cancel.\n_(Expires in 60 seconds)_',
-    notSetup:
-      'Hi! This bot is not configured for this chat.\nOpen the dashboard, create an account, then send:\n*/setup CODE*',
+    notSetup: (url: string) =>
+      'Hi! This bot is not configured for this chat.\n' +
+      'Open the dashboard to create an account and get a setup code:\n' +
+      '*' +
+      url +
+      '*\n\n' +
+      'Then send:\n*/setup CODE*',
     setupOk: (name) =>
       '✅ *Account linked!*\nName: *' +
       name +
       '*\n\nExamples:\n_lunch 35k_\n_received salary 5jt_',
-    setupBadCode:
-      '❌ Invalid or expired code. Generate a new one from the dashboard.',
+    setupBadCode: (url: string) =>
+      '❌ Invalid or expired code.\n' +
+      'Generate a new one from the dashboard:\n*' +
+      url +
+      '*',
     langChanged: (lang) =>
       '✅ Language changed to ' +
       (lang === 'en' ? 'English' : 'Bahasa Indonesia') +
