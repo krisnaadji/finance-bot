@@ -1,1 +1,1 @@
-"# finance-bot" 
+# finance-bot
