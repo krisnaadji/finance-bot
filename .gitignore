@@ -1,0 +1,14 @@
+# Environment variables — never commit secrets
+.env
+env_bak
+
+# Dependencies — install from package.json
+node_modules/
+
+# Build output
+dist/
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+*.log
