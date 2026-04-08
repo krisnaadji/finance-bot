@@ -1,8 +1,9 @@
 import { supabase } from '../services/supabase';
 import { sendWA } from '../services/whatsapp';
-import { formatIDR } from '../utils/format';
+import { formatIDR, formatDate } from '../utils/format';
 import { AIResponse, Account, IncomingMessage } from '../ai/types';
 import { Lang } from '../utils/lang';
+import { t } from '../i18n/bot';
 
 export async function createMultiple(
   ai: AIResponse,
@@ -11,14 +12,11 @@ export async function createMultiple(
   lang: Lang,
 ) {
   const items = ai.transactions ?? [];
-  if (!items.length) {
+  if (!items.length)
     return sendWA(
       msg.chatId,
-      lang === 'id'
-        ? 'Tidak ada transaksi yang ditemukan.'
-        : 'No transactions found.',
+      lang === 'id' ? 'Tidak ada transaksi.' : 'No transactions found.',
     );
-  }
 
   // Resolve category names → IDs
   const { data: cats } = await supabase
@@ -28,6 +26,7 @@ export async function createMultiple(
   const catMap: Record<string, string> = {};
   for (const c of cats ?? []) catMap[c.name] = c.id;
 
+  // Insert all transactions
   const rows = items.map((p) => ({
     account_id: account.id,
     amount: Number(p.amount ?? 0),
@@ -35,22 +34,64 @@ export async function createMultiple(
     description: p.description ?? '',
     date: p.date ?? new Date().toISOString().split('T')[0],
     category_id: p.category ? (catMap[p.category] ?? null) : null,
-    wa_message_id: msg.messageId,
+    raw_message: msg.text,
+    wa_user_message_id: msg.messageId,
   }));
 
-  await supabase.from('transactions').insert(rows);
+  const { data: inserted, error } = await supabase
+    .from('transactions')
+    .insert(rows)
+    .select();
 
-  // Build reply
-  const lines = items.map(
-    (p) =>
-      (p.type === 'income' ? '💰' : '💸') +
-      ' ' +
-      (p.description ?? '') +
-      ' — ' +
+  if (error || !inserted?.length) {
+    await sendWA(
+      msg.chatId,
+      lang === 'id'
+        ? '❌ Gagal menyimpan transaksi.'
+        : '❌ Failed to save transactions.',
+    );
+    return;
+  }
+
+  // Build informative reply with number, description, category, type, amount
+  const lines = items.map((p, i) => {
+    const emoji = p.type === 'income' ? '💰' : '💸';
+    const typeStr =
+      p.type === 'income'
+        ? lang === 'id'
+          ? 'Pemasukan'
+          : 'Income'
+        : lang === 'id'
+          ? 'Pengeluaran'
+          : 'Expense';
+    const cat = p.category ?? (lang === 'id' ? 'Lainnya' : 'Other');
+    const amt =
       (p.type === 'income' ? '+' : '-') +
       'Rp' +
-      formatIDR(Number(p.amount ?? 0)),
-  );
+      formatIDR(Number(p.amount ?? 0));
+    const date = formatDate(
+      p.date ?? new Date().toISOString().split('T')[0],
+      lang,
+    );
+    return (
+      i +
+      1 +
+      '. ' +
+      emoji +
+      ' ' +
+      (p.description ?? '') +
+      '' +
+      '   ' +
+      amt +
+      ' · ' +
+      cat +
+      ' · ' +
+      typeStr +
+      ' · ' +
+      date
+    );
+  });
+
   const total = items.reduce(
     (s, p) =>
       s +
@@ -59,20 +100,29 @@ export async function createMultiple(
   );
   const totalStr = (total >= 0 ? '-' : '+') + 'Rp' + formatIDR(Math.abs(total));
 
-  const reply =
+  const header =
     lang === 'id'
-      ? '✅ *' +
-        items.length +
-        ' transaksi tercatat!*\n\n' +
-        lines.join('\n') +
-        '\n\n🏦 Total: ' +
-        totalStr
-      : '✅ *' +
-        items.length +
-        ' transactions recorded!*\n\n' +
-        lines.join('\n') +
-        '\n\n🏦 Total: ' +
-        totalStr;
+      ? '✅ *' + items.length + ' transaksi tercatat!*'
+      : '✅ *' + items.length + ' transactions recorded!*';
+  const footer =
+    '🏦 ' +
+    (lang === 'id' ? 'Total' : 'Total') +
+    ': ' +
+    totalStr +
+    '' +
+    (lang === 'id'
+      ? '_Balas pesan ini untuk edit atau hapus_'
+      : '_Reply to edit or delete a transaction_');
 
-  await sendWA(msg.chatId, reply);
+  const reply = header + '' + lines.join('') + footer;
+  const botMessageId = await sendWA(msg.chatId, reply);
+
+  // Store bot message ID on every inserted transaction so reply-to-edit works
+  if (botMessageId) {
+    const ids = inserted.map((r) => r.id);
+    await supabase
+      .from('transactions')
+      .update({ wa_bot_message_id: botMessageId })
+      .in('id', ids);
+  }
 }
