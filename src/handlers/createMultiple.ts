@@ -80,7 +80,7 @@ export async function createMultiple(
       emoji +
       ' ' +
       (p.description ?? '') +
-      '' +
+      '\n' +
       '   ' +
       amt +
       ' · ' +
@@ -105,16 +105,16 @@ export async function createMultiple(
       ? '✅ *' + items.length + ' transaksi tercatat!*'
       : '✅ *' + items.length + ' transactions recorded!*';
   const footer =
-    '🏦 ' +
+    '\n\n🏦 ' +
     (lang === 'id' ? 'Total' : 'Total') +
     ': ' +
     totalStr +
-    '' +
+    '\n\n' +
     (lang === 'id'
       ? '_Balas pesan ini untuk edit atau hapus_'
       : '_Reply to edit or delete a transaction_');
 
-  const reply = header + '' + lines.join('') + footer;
+  const reply = header + '\n\n' + lines.join('\n\n') + footer;
   const botMessageId = await sendWA(msg.chatId, reply);
 
   // Store bot message ID on every inserted transaction so reply-to-edit works

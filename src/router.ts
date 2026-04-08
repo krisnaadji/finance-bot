@@ -96,16 +96,14 @@ export async function routeMessage(msg: IncomingMessage) {
     const newLang = text.split(/\s+/)[1]?.toLowerCase();
     if (!SUPPORTED_LANGS.includes(newLang as Lang))
       return sendWA(msg.chatId, 'Supported: /language id   or   /language en');
-    await supabase
-      .from('members')
-      .upsert(
-        {
-          account_id: account.id,
-          wa_phone: msg.rawFrom,
-          language_pref: newLang,
-        },
-        { onConflict: 'account_id,wa_phone' },
-      );
+    await supabase.from('members').upsert(
+      {
+        account_id: account.id,
+        wa_phone: msg.rawFrom,
+        language_pref: newLang,
+      },
+      { onConflict: 'account_id,wa_phone' },
+    );
     return sendWA(msg.chatId, t[newLang as Lang].langChanged(newLang));
   }
 
@@ -147,7 +145,7 @@ export async function routeMessage(msg: IncomingMessage) {
       .from('transactions')
       .select('*')
       .eq('account_id', account.id)
-      .eq('wa_message_id', msg.repliedToId);
+      .eq('wa_bot_message_id', msg.repliedToId);
 
     if (multiples && multiples.length > 1) {
       // Build context listing all transactions for Gemini
