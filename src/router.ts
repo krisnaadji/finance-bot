@@ -147,6 +147,13 @@ export async function routeMessage(msg: IncomingMessage) {
       .eq('account_id', account.id)
       .eq('wa_bot_message_id', msg.repliedToId);
 
+    console.log(
+      '[DEBUG] repliedToId:',
+      msg.repliedToId,
+      '| multiples found:',
+      multiples?.length ?? 0,
+    );
+
     if (multiples && multiples.length > 1) {
       // Build context listing all transactions for Gemini
       const context = multiples
