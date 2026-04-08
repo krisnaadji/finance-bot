@@ -62,6 +62,7 @@ export async function getSummary(
   const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1])[0];
   const netStr = (net >= 0 ? '+' : '-') + 'Rp' + formatIDR(Math.abs(net));
 
+  const dashUrl = process.env.DASHBOARD_URL ?? '';
   const reply =
     lang === 'id'
       ? '📊 *Ringkasan ' +
@@ -83,7 +84,8 @@ export async function getSummary(
             ' (Rp' +
             formatIDR(top[1]) +
             ')'
-          : '')
+          : '') +
+        (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '')
       : '📊 *Summary ' +
         from +
         ' to ' +
@@ -99,7 +101,8 @@ export async function getSummary(
         netStr +
         (top
           ? '\n\n🔺 Top expense: ' + top[0] + ' (Rp' + formatIDR(top[1]) + ')'
-          : '');
+          : '') +
+        (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '');
 
   await sendWA(msg.chatId, reply);
 }

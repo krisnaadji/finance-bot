@@ -1,4 +1,5 @@
 export { createTxn } from './createTxn';
+export { createMultiple } from './createMultiple';
 export { editTxn } from './editTxn';
 export { deleteTxn, confirmDelete } from './deleteTxn';
 export { getSummary } from './getSummary';

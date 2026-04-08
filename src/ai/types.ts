@@ -1,12 +1,10 @@
-// Central type definitions used across all files.
-// Create this before any other src/ file.
-
 export interface AIPayload {
   amount?: number;
   type?: 'income' | 'expense';
   category?: string;
   description?: string;
   date?: string;
+  selection_index?: number; // 1-based index for EDIT_FROM_MULTIPLE
   period?: string;
   category_name?: string;
   category_type?: string;
@@ -15,6 +13,8 @@ export interface AIPayload {
 export interface AIResponse {
   action:
     | 'CREATE_TRANSACTION'
+    | 'CREATE_MULTIPLE' // multiple transactions in one message
+    | 'EDIT_FROM_MULTIPLE' // edit one transaction from a multi-transaction reply
     | 'EDIT_TRANSACTION'
     | 'DELETE_TRANSACTION'
     | 'GET_SUMMARY'
@@ -23,6 +23,7 @@ export interface AIResponse {
     | 'CHITCHAT'
     | 'UNKNOWN';
   payload: AIPayload;
+  transactions?: AIPayload[]; // used for CREATE_MULTIPLE
   reply?: string;
 }
 

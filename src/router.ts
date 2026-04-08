@@ -7,6 +7,7 @@ import { t } from './i18n/bot';
 import { IncomingMessage } from './ai/types';
 import {
   createTxn,
+  createMultiple,
   editTxn,
   deleteTxn,
   confirmDelete,
@@ -95,15 +96,31 @@ export async function routeMessage(msg: IncomingMessage) {
     const newLang = text.split(/\s+/)[1]?.toLowerCase();
     if (!SUPPORTED_LANGS.includes(newLang as Lang))
       return sendWA(msg.chatId, 'Supported: /language id   or   /language en');
-    await supabase.from('members').upsert(
-      {
-        account_id: account.id,
-        wa_phone: msg.rawFrom,
-        language_pref: newLang,
-      },
-      { onConflict: 'account_id,wa_phone' },
-    );
+    await supabase
+      .from('members')
+      .upsert(
+        {
+          account_id: account.id,
+          wa_phone: msg.rawFrom,
+          language_pref: newLang,
+        },
+        { onConflict: 'account_id,wa_phone' },
+      );
     return sendWA(msg.chatId, t[newLang as Lang].langChanged(newLang));
+  }
+
+  // /dashboard — send dashboard link
+  if (text === '/dashboard') {
+    const url = process.env.DASHBOARD_URL ?? 'Not configured';
+    const reply =
+      lang === 'id'
+        ? '📱 *Dashboard Finance Bot*\n\n' +
+          url +
+          '\n\nLihat ringkasan, transaksi, dan kelola akun di sini.'
+        : '📱 *Finance Bot Dashboard*\n\n' +
+          url +
+          '\n\nView summaries, transactions, and manage your account here.';
+    return sendWA(msg.chatId, reply);
   }
 
   // /rekap or /summary shortcut
@@ -123,8 +140,41 @@ export async function routeMessage(msg: IncomingMessage) {
   const pending = await getActivePending(account.id);
   if (pending && isYesNo(text)) return confirmDelete(msg, pending, lang);
 
-  // Reply to a known transaction — edit or delete
+  // Reply to a bot message — could be single or multi-transaction
   if (msg.repliedToId) {
+    // Check if multiple transactions share this message ID
+    const { data: multiples } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('account_id', account.id)
+      .eq('wa_message_id', msg.repliedToId);
+
+    if (multiples && multiples.length > 1) {
+      // Build context listing all transactions for Gemini
+      const context = multiples
+        .map(
+          (t, i) =>
+            i +
+            1 +
+            '. ' +
+            t.description +
+            ' — ' +
+            (t.type === 'income' ? '+' : '-') +
+            'Rp' +
+            t.amount +
+            ' (' +
+            t.date +
+            ')',
+        )
+        .join('\n');
+      const ai = await callGemini(text, account, lang, undefined, context);
+      if (ai.action === 'EDIT_FROM_MULTIPLE' && ai.payload.selection_index) {
+        const target = multiples[ai.payload.selection_index - 1];
+        if (target) return editTxn(ai, target.id, account, msg, lang);
+      }
+    }
+
+    // Single transaction reply — existing flow
     const txn = await findTxnByReply(msg.repliedToId, account.id);
     if (txn) {
       const ai = await callGemini(text, account, lang, txn);
@@ -140,6 +190,8 @@ export async function routeMessage(msg: IncomingMessage) {
   switch (ai.action) {
     case 'CREATE_TRANSACTION':
       return createTxn(ai, account, msg, lang);
+    case 'CREATE_MULTIPLE':
+      return createMultiple(ai, account, msg, lang);
     case 'GET_SUMMARY':
       return getSummary(ai, account, msg, lang);
     case 'GET_CATEGORIES':

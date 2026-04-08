@@ -8,7 +8,8 @@ export function buildPrompt(
   message: string,
   lang: Lang,
   categories: { income: string[]; expense: string[] },
-  replyContext?: string, // pre-formatted string describing the transaction being replied to
+  replyContext?: string, // context for single-txn reply
+  multiContext?: string, // numbered list for EDIT_FROM_MULTIPLE
 ): string {
   const today = new Date().toISOString().split('T')[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
@@ -38,35 +39,34 @@ export function buildPrompt(
   return [
     intro,
     '',
-    replyContext ? replyContext + '' : '',
+    replyContext ?? '',
+    multiContext
+      ? 'These transactions were recorded together:\n' +
+        multiContext +
+        '\nUser wants to edit one of them.'
+      : '',
     'Message: ' + message,
     'Today: ' + today,
     '',
     'Available income categories: ' + categories.income.join(', '),
     'Available expense categories: ' + categories.expense.join(', '),
     '',
-    'Return ONLY a valid JSON object. No markdown, no extra text.',
-    'Structure:',
+    'Return ONLY valid JSON. No markdown, no extra text.',
     '{',
-    '  action: CREATE_TRANSACTION | EDIT_TRANSACTION | DELETE_TRANSACTION |',
-    '          GET_SUMMARY | GET_CATEGORIES | ADD_CATEGORY | CHITCHAT | UNKNOWN,',
-    '  payload: {',
-    '    amount: number (no symbols),',
-    '    type: income or expense,',
-    '    category: exact name from the list above,',
-    '    description: short natural description,',
-    '    date: YYYY-MM-DD,',
-    '    period: this_month|last_month|this_week|custom (GET_SUMMARY only),',
-    '    category_name: string (ADD_CATEGORY only),',
-    '    category_type: income or expense (ADD_CATEGORY only)',
-    '  },',
-    '  reply: string (ONLY for CHITCHAT or UNKNOWN)',
+    '  action: CREATE_TRANSACTION | CREATE_MULTIPLE | EDIT_FROM_MULTIPLE',
+    '        | EDIT_TRANSACTION | DELETE_TRANSACTION',
+    '        | GET_SUMMARY | GET_CATEGORIES | ADD_CATEGORY | CHITCHAT | UNKNOWN,',
+    '  payload: { amount, type, category, description, date, selection_index },',
+    '  transactions: [ ...payloads ],  // CREATE_MULTIPLE only',
     '}',
     '',
     'Rules:',
     ...rules.map((r: string) => '- ' + r),
-    '- Pick closest matching category; do not invent new ones',
-    '- Only include relevant payload fields',
+    '- Single transaction → CREATE_TRANSACTION with payload',
+    '- Multiple transactions in one message → CREATE_MULTIPLE with transactions array',
+    '- If multiContext present → user editing one transaction → EDIT_FROM_MULTIPLE',
+    '  set selection_index (1-based) and include only changed fields in payload',
+    '- Pick closest matching category from list; do not invent new ones',
     '- For CHITCHAT/UNKNOWN: empty payload, write friendly reply field',
   ]
     .filter(Boolean)
