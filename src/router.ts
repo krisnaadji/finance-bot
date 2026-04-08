@@ -173,6 +173,10 @@ export async function routeMessage(msg: IncomingMessage) {
         )
         .join('\n');
       const ai = await callGemini(text, account, lang, undefined, context);
+      console.log(
+        '[DEBUG] EDIT_FROM_MULTIPLE ai response:',
+        JSON.stringify(ai),
+      );
       if (ai.action === 'EDIT_FROM_MULTIPLE' && ai.payload.selection_index) {
         const target = multiples[ai.payload.selection_index - 1];
         if (target) return editTxn(ai, target.id, account, msg, lang);
