@@ -24,6 +24,7 @@ export interface AIResponse {
     | 'UNKNOWN';
   payload: AIPayload;
   transactions?: AIPayload[]; // used for CREATE_MULTIPLE
+  selection_index?: number;
   reply?: string;
 }
 

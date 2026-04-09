@@ -177,8 +177,9 @@ export async function routeMessage(msg: IncomingMessage) {
         '[DEBUG] EDIT_FROM_MULTIPLE ai response:',
         JSON.stringify(ai),
       );
-      if (ai.action === 'EDIT_FROM_MULTIPLE' && ai.payload.selection_index) {
-        const target = multiples[ai.payload.selection_index - 1];
+      const selIdx = (ai as any).selection_index ?? ai.payload.selection_index;
+      if (ai.action === 'EDIT_FROM_MULTIPLE' && selIdx) {
+        const target = multiples[selIdx - 1];
         if (target) return editTxn(ai, target.id, account, msg, lang);
       }
     }
