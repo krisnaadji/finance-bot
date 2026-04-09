@@ -143,9 +143,10 @@ export async function routeMessage(msg: IncomingMessage) {
     // Check if multiple transactions share this message ID
     const { data: multiples } = await supabase
       .from('transactions')
-      .select('*')
+      .select('*, categories(name)')
       .eq('account_id', account.id)
-      .eq('wa_bot_message_id', msg.repliedToId);
+      .eq('wa_bot_message_id', msg.repliedToId)
+      .order('created_at');
 
     console.log(
       '[DEBUG] repliedToId:',
@@ -183,8 +184,15 @@ export async function routeMessage(msg: IncomingMessage) {
         if (target) return editTxn(ai, target.id, account, msg, lang);
       }
       if (ai.action === 'DELETE_FROM_MULTIPLE' && selIdx) {
-        const target = multiples[selIdx - 1];
-        if (target) return deleteTxn(target, account, msg, lang);
+        const raw = multiples[selIdx - 1];
+        if (raw) {
+          // Map raw row to TxnForBot shape
+          const txn = {
+            ...raw,
+            category_name: (raw.categories as any)?.name ?? '—',
+          };
+          return deleteTxn(txn, account, msg, lang);
+        }
       }
     }
 

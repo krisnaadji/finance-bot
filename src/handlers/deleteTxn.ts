@@ -29,7 +29,7 @@ export async function deleteTxn(
     t[lang].deleteConfirm(
       txn.description,
       formatIDR(txn.amount),
-      txn.category_name,
+      txn.category_name ?? '-',
       formatDate(txn.date, lang),
     ),
   );
