@@ -66,6 +66,7 @@ export function buildPrompt(
     '- Multiple transactions in one message → CREATE_MULTIPLE with transactions array',
     '- If multiContext present → user editing one transaction → EDIT_FROM_MULTIPLE',
     '  set selection_index (1-based) and include only changed fields in payload',
+    '- If multiContext present and user wants to DELETE: DELETE_FROM_MULTIPLE with selection_index only',
     '- Pick closest matching category from list; do not invent new ones',
     '- For CHITCHAT/UNKNOWN: empty payload, write friendly reply field',
   ]

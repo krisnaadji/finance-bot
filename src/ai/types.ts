@@ -15,6 +15,7 @@ export interface AIResponse {
     | 'CREATE_TRANSACTION'
     | 'CREATE_MULTIPLE' // multiple transactions in one message
     | 'EDIT_FROM_MULTIPLE' // edit one transaction from a multi-transaction reply
+    | 'DELETE_FROM_MULTIPLE'
     | 'EDIT_TRANSACTION'
     | 'DELETE_TRANSACTION'
     | 'GET_SUMMARY'

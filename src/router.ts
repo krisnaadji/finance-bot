@@ -182,6 +182,10 @@ export async function routeMessage(msg: IncomingMessage) {
         const target = multiples[selIdx - 1];
         if (target) return editTxn(ai, target.id, account, msg, lang);
       }
+      if (ai.action === 'DELETE_FROM_MULTIPLE' && selIdx) {
+        const target = multiples[selIdx - 1];
+        if (target) return deleteTxn(target, account, msg, lang);
+      }
     }
 
     // Single transaction reply — existing flow
