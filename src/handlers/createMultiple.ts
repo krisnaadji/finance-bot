@@ -38,19 +38,34 @@ export async function createMultiple(
     wa_user_message_id: msg.messageId,
   }));
 
-  const { data: inserted, error } = await supabase
-    .from('transactions')
-    .insert(rows)
-    .select();
+  const inserted: any[] = [];
+  for (const row of rows) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert(row)
+      .select()
+      .single();
 
-  if (error || !inserted?.length) {
-    await sendWA(
-      msg.chatId,
-      lang === 'id'
-        ? '❌ Gagal menyimpan transaksi.'
-        : '❌ Failed to save transactions.',
-    );
-    return;
+    if (error || !data) {
+      // Rollback: delete already-inserted rows
+      if (inserted.length > 0) {
+        await supabase
+          .from('transactions')
+          .delete()
+          .in(
+            'id',
+            inserted.map((r) => r.id),
+          );
+      }
+      await sendWA(
+        msg.chatId,
+        lang === 'id'
+          ? '❌ Gagal menyimpan transaksi.'
+          : '❌ Failed to save transactions.',
+      );
+      return;
+    }
+    inserted.push(data);
   }
 
   // Build informative reply with number, description, category, type, amount
