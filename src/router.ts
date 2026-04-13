@@ -156,7 +156,6 @@ export async function routeMessage(msg: IncomingMessage) {
     );
 
     if (multiples && multiples.length > 1) {
-      // Build context listing all transactions for Gemini
       const context = multiples
         .map(
           (t, i) =>
@@ -173,20 +172,25 @@ export async function routeMessage(msg: IncomingMessage) {
             ')',
         )
         .join('\n');
+
       const ai = await callGemini(text, account, lang, undefined, context);
-      console.log(
-        '[DEBUG] EDIT_FROM_MULTIPLE ai response:',
-        JSON.stringify(ai),
-      );
-      const selIdx = (ai as any).selection_index ?? ai.payload.selection_index;
-      if (ai.action === 'EDIT_FROM_MULTIPLE' && selIdx) {
+      const selIdx = (ai as any).selection_index ?? ai.payload?.selection_index;
+
+      // Handle edit — accept both EDIT_FROM_MULTIPLE and EDIT_TRANSACTION
+      const isEdit =
+        ai.action === 'EDIT_FROM_MULTIPLE' || ai.action === 'EDIT_TRANSACTION';
+      if (isEdit && selIdx) {
         const target = multiples[selIdx - 1];
         if (target) return editTxn(ai, target.id, account, msg, lang);
       }
-      if (ai.action === 'DELETE_FROM_MULTIPLE' && selIdx) {
+
+      // Handle delete — accept both DELETE_FROM_MULTIPLE and DELETE_TRANSACTION
+      const isDelete =
+        ai.action === 'DELETE_FROM_MULTIPLE' ||
+        ai.action === 'DELETE_TRANSACTION';
+      if (isDelete && selIdx) {
         const raw = multiples[selIdx - 1];
         if (raw) {
-          // Map raw row to TxnForBot shape
           const txn = {
             ...raw,
             category_name: (raw.categories as any)?.name ?? '—',
