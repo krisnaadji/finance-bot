@@ -4,7 +4,7 @@ WhatsApp bot that records personal finance transactions using natural language. 
 
 ```
 User sends: "makan siang 35k"
-Bot replies: "💸 Tercatat! Makan Siang · -Rp35.000 · Kebutuhan Pokok · 📅 7 Apr 2026"
+Bot replies: "💸 Tercatat! Makan Siang · -Rp35.000 · Kebutuhan Pokok · 📅 14 Apr 2026"
 ```
 
 ---
@@ -28,8 +28,13 @@ WhatsApp (User)
  │       ├─ /setup      → setup.ts         │
  │       ├─ /dashboard  → sends URL        │
  │       ├─ /rekap      → getSummary.ts    │
+ │       ├─ /kategori   → getCategories.ts │
+ │       ├─ /language   → sets lang pref   │
+ │       ├─ /help       → helpText         │
  │       ├─ pending?    → confirmDelete.ts │
  │       ├─ reply?      → editTxn/delete   │
+ │       │    └─ multi? → EDIT/DELETE      │
+ │       │               _FROM_MULTIPLE    │
  │       └─ new msg     → callGemini()     │
  │                            │            │
  │                       AI classifies     │
@@ -44,7 +49,7 @@ WhatsApp (User)
       │
       ▼
  Supabase (PostgreSQL)
- accounts · transactions · categories · members
+ accounts · transactions · categories · members · invite_tokens
 ```
 
 ---
@@ -68,22 +73,22 @@ WhatsApp (User)
 ```
 src/
   index.ts                  # Express app, /health endpoint
-  webhook.ts                # Webhook verify (GET) + receive (POST)
-  router.ts                 # Message routing logic
+  webhook.ts                # Webhook verify (GET) + receive (POST), deduplication
+  router.ts                 # Message routing logic, multi-transaction handling
   ai/
     gemini.ts               # Gemini API call + prompt
     types.ts                # AIResponse, AIPayload types
     prompts.ts              # buildPrompt() function
   handlers/
-    createTxn.ts            # Record single transaction
-    createMultiple.ts       # Record multiple transactions at once
+    createTxn.ts            # Record single transaction + attribution
+    createMultiple.ts       # Record multiple transactions (sequential insert)
     editTxn.ts              # Edit via WhatsApp reply
     deleteTxn.ts            # Delete with confirmation
     confirmDelete.ts        # Handle yes/no confirmation
     getSummary.ts           # Monthly summary + dashboard link
     getCategories.ts        # List categories
     addCategory.ts          # Add custom category
-    setup.ts                # /setup CODE account linking
+    setup.ts                # /setup CODE — link account + store wa_phone
     chitchat.ts             # General conversation
     index.ts                # Re-exports all handlers
   services/
@@ -222,38 +227,42 @@ fly deploy
 Dashboard                        WhatsApp
     │                                │
     │  1. Create account             │
-    │     (e.g. "Tabungan")          │
+    │     (e.g. "Keluarga")          │
     │  2. Generate link code         │
-    │     (e.g. TABUNGAN-X7K2)       │
+    │     (e.g. KELUARGA-X7K2)       │
     │                                │
     │                3. User sends:  │
-    │                /setup TABUNGAN-X7K2
+    │                /setup KELUARGA-X7K2
     │                                │
     │           4. Bot links chat ───┘
-    │              to account
+    │              to account +
+    │              stores wa_phone
+    │              as member record
     │
     └── 5. Transactions appear in dashboard
+             with "by [name]" attribution
 ```
 
-**To switch accounts:** generate a new code from a different account and send `/setup NEW-CODE`. This overwrites the existing link.
+**Group accounts:** add the bot to a WhatsApp group, then send `/setup CODE` from the group. Each group member who sends `/setup` gets their own member record — their transactions are attributed to them individually.
 
-**To unlink:** not yet implemented. Workaround: send `/setup` with a code from a new blank account.
+**To switch accounts:** generate a new code from a different account and send `/setup NEW-CODE`.
 
 ---
 
 ## Supported Commands
 
-| Message               | Action                                    |
-|-----------------------|-------------------------------------------|
-| `/setup CODE`         | Link WhatsApp chat to a dashboard account |
-| `/help`               | Show help with all commands               |
-| `/dashboard`          | Get the dashboard URL                     |
-| `/rekap`              | Monthly summary with income/expense       |
-| `/kategori`           | List all available categories             |
-| `makan siang 35k`     | Record Rp35.000 expense                   |
-| `gaji masuk 5jt`      | Record Rp5.000.000 income                 |
-| `makan 35k, kopi 15k` | Record multiple transactions at once      |
-| Reply to bot message  | Edit or delete that transaction           |
+| Message               | Action                                         |
+|-----------------------|------------------------------------------------|
+| `/setup CODE`         | Link WhatsApp chat to a dashboard account      |
+| `/help`               | Show help with examples and all commands       |
+| `/dashboard`          | Get the dashboard URL                          |
+| `/rekap`              | Monthly summary with income/expense totals     |
+| `/kategori`           | List all available categories                  |
+| `/language id\|en`    | Switch bot reply language                      |
+| `makan siang 35k`     | Record Rp35.000 expense                        |
+| `gaji masuk 5jt`      | Record Rp5.000.000 income                      |
+| `makan 35k, kopi 15k` | Record multiple transactions at once           |
+| Reply to bot message  | Edit or delete that transaction                |
 
 **Amount formats:** `35k` = Rp35.000 · `5jt` = Rp5.000.000 · `150rb` = Rp150.000
 
@@ -281,20 +290,42 @@ Bot replies with an itemised summary:
 🏦 Total: -Rp55.000
 ```
 
-**To edit one from a multi-transaction reply:**
+**To edit or delete one item from a multi-transaction reply:**
 
 ```
+Reply to the bot's summary message:
 "2 kopi jadi 20k"         → edits item #2, amount = Rp20.000
-"yang kopi ganti tgl 12"  → edits item #2 by name, changes date
+"yang kopi ganti tgl 12"  → edits by name, changes date
+"hapus no 2"              → deletes item #2
 ```
+
+---
+
+## Transaction Attribution
+
+When a transaction is recorded via WhatsApp, the bot looks up the sender's `wa_phone` in the `members` table and stores their `display_name` on the transaction as `recorded_by_name`. This is shown on the dashboard for group accounts.
+
+Name resolution priority:
+1. `members.display_name` (set by user on dashboard)
+2. `msg.rawFrom` (phone number fallback)
+
+---
+
+## Key Implementation Notes
+
+**Webhook deduplication** — `res.sendStatus(200)` is called immediately before any processing so Meta never retries. Each message is also checked against `wa_user_message_id` in the transactions table to skip already-processed messages.
+
+**Multi-transaction ordering** — transactions in a `CREATE_MULTIPLE` batch are inserted sequentially (not bulk) to guarantee distinct `created_at` timestamps. This ensures `.order('created_at')` in the router always returns them in the original message order.
+
+**Gemini action fallback** — when replying to a multi-transaction message, the router accepts both `EDIT_FROM_MULTIPLE`/`DELETE_FROM_MULTIPLE` and `EDIT_TRANSACTION`/`DELETE_TRANSACTION` as valid actions since Gemini is inconsistent with action naming.
 
 ---
 
 ## Known Limitations
 
-| Feature                       | Status       | Notes                                             |
-|-------------------------------|--------------|---------------------------------------------------|
-| Group account member invites  | ❌ Not built | Workaround: share /setup code with other members  |
+| Feature                       | Status       | Notes                                               |
+|-------------------------------|--------------|-----------------------------------------------------|
 | Unlink WhatsApp from account  | ❌ Not built | Workaround: /setup with a code from another account |
-| Edit/delete account from bot  | ❌ Not built | Use dashboard Accounts page instead               |
-| Edit/delete category from bot | ❌ Not built | Use dashboard Categories page instead             |
+| Edit/delete account from bot  | ❌ Not built | Use dashboard Accounts page instead                 |
+| Edit/delete category from bot | ❌ Not built | Use dashboard Categories page instead               |
+| Receipt / bill photo parsing  | ❌ Not built | Planned — Gemini Vision can handle this             |
