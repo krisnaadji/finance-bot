@@ -52,7 +52,7 @@ WhatsApp (User)
  accounts · transactions · categories · members · invite_tokens
 ```
 
-> See [Database Schema](https://github.com/krisnaadji/finance-dashboard/blob/README-database.md) for full schema, table definitions, and ER diagram.
+> See [Database Schema](https://github.com/krisnaadji/finance-dashboard/blob/main/README-database.md) for full schema, table definitions, and ER diagram.
 
 ---
 
