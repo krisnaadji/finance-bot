@@ -16,9 +16,9 @@ WhatsApp (User)
       │
       ▼
  Gateway Layer
- ┌──────────────────────────────┐
- │  Fonnte  ──or──  Meta API   │
- └──────────────────────────────┘
+ ┌────────────────────────────┐
+ │  Fonnte  ──or──  Meta API  │
+ └────────────────────────────┘
       │  webhook POST /webhook
       ▼
  Bot Backend (This Repo)
@@ -52,6 +52,8 @@ WhatsApp (User)
  accounts · transactions · categories · members · invite_tokens
 ```
 
+> See [Database Schema](https://github.com/krisnaadji/finance-dashboard/blob/README-database.md) for full schema, table definitions, and ER diagram.
+
 ---
 
 ## Tech Stack
@@ -73,8 +75,8 @@ WhatsApp (User)
 ```
 src/
   index.ts                  # Express app, /health endpoint
-  webhook.ts                # Webhook verify (GET) + receive (POST), deduplication
-  router.ts                 # Message routing logic, multi-transaction handling
+  webhook.ts                # Webhook verify + receive (200 first, deduplication)
+  router.ts                 # Message routing, multi-transaction handling
   ai/
     gemini.ts               # Gemini API call + prompt
     types.ts                # AIResponse, AIPayload types
@@ -290,10 +292,9 @@ Bot replies with an itemised summary:
 🏦 Total: -Rp55.000
 ```
 
-**To edit or delete one item from a multi-transaction reply:**
+**To edit or delete one item, reply to the bot's summary message:**
 
 ```
-Reply to the bot's summary message:
 "2 kopi jadi 20k"         → edits item #2, amount = Rp20.000
 "yang kopi ganti tgl 12"  → edits by name, changes date
 "hapus no 2"              → deletes item #2
@@ -306,16 +307,16 @@ Reply to the bot's summary message:
 When a transaction is recorded via WhatsApp, the bot looks up the sender's `wa_phone` in the `members` table and stores their `display_name` on the transaction as `recorded_by_name`. This is shown on the dashboard for group accounts.
 
 Name resolution priority:
-1. `members.display_name` (set by user on dashboard)
+1. `members.display_name` (set by user on dashboard Accounts page)
 2. `msg.rawFrom` (phone number fallback)
 
 ---
 
 ## Key Implementation Notes
 
-**Webhook deduplication** — `res.sendStatus(200)` is called immediately before any processing so Meta never retries. Each message is also checked against `wa_user_message_id` in the transactions table to skip already-processed messages.
+**Webhook deduplication** — `res.sendStatus(200)` is called immediately before any processing so Meta never retries. Each message is also checked against `wa_user_message_id` to skip already-processed messages.
 
-**Multi-transaction ordering** — transactions in a `CREATE_MULTIPLE` batch are inserted sequentially (not bulk) to guarantee distinct `created_at` timestamps. This ensures `.order('created_at')` in the router always returns them in the original message order.
+**Multi-transaction ordering** — transactions in a `CREATE_MULTIPLE` batch are inserted sequentially (not bulk) to guarantee distinct `created_at` timestamps. This ensures `.order('created_at')` always returns them in the original message order when looking up by `wa_bot_message_id`.
 
 **Gemini action fallback** — when replying to a multi-transaction message, the router accepts both `EDIT_FROM_MULTIPLE`/`DELETE_FROM_MULTIPLE` and `EDIT_TRANSACTION`/`DELETE_TRANSACTION` as valid actions since Gemini is inconsistent with action naming.
 
