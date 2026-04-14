@@ -26,6 +26,14 @@ export async function createMultiple(
   const catMap: Record<string, string> = {};
   for (const c of cats ?? []) catMap[c.name] = c.id;
 
+  // Look up member name by phone for attribution
+  const { data: member } = await supabase
+    .from('members')
+    .select('display_name')
+    .eq('account_id', account.id)
+    .eq('wa_phone', msg.rawFrom)
+    .single();
+
   // Insert all transactions
   const rows = items.map((p) => ({
     account_id: account.id,
@@ -36,6 +44,8 @@ export async function createMultiple(
     category_id: p.category ? (catMap[p.category] ?? null) : null,
     raw_message: msg.text,
     wa_user_message_id: msg.messageId,
+    recorded_by_name: member?.display_name ?? msg.rawFrom,
+    recorded_by_phone: msg.rawFrom,
   }));
 
   const inserted: any[] = [];

@@ -19,6 +19,14 @@ export async function createTxn(
     .ilike('name', ai.payload.category ?? '')
     .single();
 
+  // Look up member name by phone for attribution
+  const { data: member } = await supabase
+    .from('members')
+    .select('display_name')
+    .eq('account_id', account.id)
+    .eq('wa_phone', msg.rawFrom)
+    .single();
+
   // Insert transaction without bot message ID yet
   const { data: txn, error } = await supabase
     .from('transactions')
@@ -31,6 +39,8 @@ export async function createTxn(
       date: ai.payload.date,
       raw_message: msg.text,
       wa_user_message_id: msg.messageId,
+      recorded_by_name: member?.display_name ?? msg.rawFrom,
+      recorded_by_phone: msg.rawFrom,
     })
     .select()
     .single();

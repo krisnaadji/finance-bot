@@ -37,5 +37,26 @@ export async function setup(
     .update({ used: true })
     .eq('id', linkCode.id);
 
+  // Upsert member record with wa_phone for transaction attribution
+  const { data: existingMember } = await supabase
+    .from('members')
+    .select('id')
+    .eq('account_id', linkCode.account_id)
+    .eq('wa_phone', msg.rawFrom)
+    .single();
+
+  if (!existingMember) {
+    await supabase.from('members').insert({
+      account_id: linkCode.account_id,
+      wa_phone: msg.rawFrom,
+      role: 'member',
+    });
+  } else {
+    await supabase
+      .from('members')
+      .update({ wa_phone: msg.rawFrom })
+      .eq('id', existingMember.id);
+  }
+
   await sendWA(msg.chatId, t[lang].setupOk((linkCode.accounts as any).name));
 }
