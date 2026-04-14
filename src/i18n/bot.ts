@@ -75,11 +75,20 @@ export const t: Record<Lang, BotStrings> = {
       (lang === 'id' ? 'Bahasa Indonesia' : 'English') +
       '.',
     helpText:
-      '📖 *Perintah tersedia:*\n' +
-      '/setup KODE [en|id] — hubungkan akun\n' +
-      '/language id|en — ganti bahasa\n' +
+      '📖 *Panduan Bot Keuangan:*\n\n' +
+      '*📝 Catat transaksi:*\n' +
+      'Cukup ketik transaksi kamu, contoh:\n' +
+      '_makan siang 35k_\n' +
+      '_gaji masuk 5jt_\n' +
+      '_kemarin bayar listrik 150rb_\n\n' +
+      '*✏️ Edit & hapus:*\n' +
+      'Balas pesan konfirmasi bot untuk edit atau hapus.\n\n' +
+      '*📊 Perintah:*\n' +
       '/rekap — ringkasan bulan ini\n' +
       '/kategori — lihat semua kategori\n' +
+      '/dashboard — buka dashboard web\n' +
+      '/language id|en — ganti bahasa\n' +
+      '/setup KODE — hubungkan akun baru\n' +
       '/help — tampilkan bantuan ini',
   },
   en: {
@@ -132,11 +141,20 @@ export const t: Record<Lang, BotStrings> = {
       (lang === 'en' ? 'English' : 'Bahasa Indonesia') +
       '.',
     helpText:
-      '📖 *Available commands:*\n' +
-      '/setup CODE [en|id] — link account\n' +
-      '/language id|en — change language\n' +
+      '📖 *Finance Bot Guide:*\n\n' +
+      '*📝 Record transactions:*\n' +
+      'Just type your transaction, e.g.:\n' +
+      '_lunch 35k_\n' +
+      '_received salary 5jt_\n' +
+      '_paid electricity bill 150rb yesterday_\n\n' +
+      '*✏️ Edit & delete:*\n' +
+      'Reply to any bot confirmation message to edit or delete.\n\n' +
+      '*📊 Commands:*\n' +
       '/rekap — this month summary\n' +
       '/kategori — list categories\n' +
+      '/dashboard — open web dashboard\n' +
+      '/language id|en — change language\n' +
+      '/setup CODE — link a new account\n' +
       '/help — show this help',
   },
 };
