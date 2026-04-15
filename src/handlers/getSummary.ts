@@ -59,8 +59,32 @@ export async function getSummary(
     const name = (txn.categories as any)?.name ?? 'Lainnya';
     byCategory[name] = (byCategory[name] ?? 0) + Number(txn.amount);
   }
-  const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1])[0];
+
+  const topCategories = Object.entries(byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
   const netStr = (net >= 0 ? '+' : '-') + 'Rp' + formatIDR(Math.abs(net));
+
+  const catLines =
+    topCategories.length > 0
+      ? '\n\n' +
+        (lang === 'id' ? '🔺 *Top Pengeluaran:*' : '🔺 *Top Expenses:*') +
+        '\n' +
+        topCategories
+          .map(
+            (c, i) =>
+              i +
+              1 +
+              '. ' +
+              c[0] +
+              ' — Rp' +
+              formatIDR(c[1]) +
+              ' (' +
+              Math.round((c[1] / expense) * 100) +
+              '%)',
+          )
+          .join('\n')
+      : '';
 
   const dashUrl = process.env.DASHBOARD_URL ?? '';
   const reply =
@@ -78,13 +102,7 @@ export async function getSummary(
         '\n' +
         '🏦 Saldo      : ' +
         netStr +
-        (top
-          ? '\n\n🔺 Pengeluaran terbesar: ' +
-            top[0] +
-            ' (Rp' +
-            formatIDR(top[1]) +
-            ')'
-          : '') +
+        catLines +
         (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '')
       : '📊 *Summary ' +
         from +
@@ -99,9 +117,7 @@ export async function getSummary(
         '\n' +
         '🏦 Balance : ' +
         netStr +
-        (top
-          ? '\n\n🔺 Top expense: ' + top[0] + ' (Rp' + formatIDR(top[1]) + ')'
-          : '') +
+        catLines +
         (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '');
 
   await sendWA(msg.chatId, reply);
