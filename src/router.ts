@@ -16,6 +16,7 @@ import {
   addCategory,
   chitchat,
   setup,
+  searchTxn,
 } from './handlers';
 
 // ── DB helpers ────────────────────────────────────────────────────
@@ -133,6 +134,12 @@ export async function routeMessage(msg: IncomingMessage) {
   // /kategori or /categories shortcut
   if (text === '/kategori' || text === '/categories')
     return getCategories(account, msg, lang);
+
+  // /cari [query] — search transactions
+  if (text.startsWith('/cari') || text.startsWith('/search')) {
+    const query = text.split(/\s+/).slice(1).join(' ');
+    return searchTxn(query, account, msg, lang);
+  }
 
   // Pending delete confirmation: check before AI to avoid unnecessary API call
   const pending = await getActivePending(account.id);

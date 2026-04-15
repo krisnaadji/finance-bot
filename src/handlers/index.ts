@@ -7,3 +7,4 @@ export { getCategories } from './getCategories';
 export { addCategory } from './addCategory';
 export { chitchat } from './chitchat';
 export { setup } from './setup';
+export { searchTxn } from './search';

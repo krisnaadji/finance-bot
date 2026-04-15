@@ -86,6 +86,7 @@ export const t: Record<Lang, BotStrings> = {
       '*📊 Perintah:*\n' +
       '/rekap — ringkasan bulan ini\n' +
       '/kategori — lihat semua kategori\n' +
+      '/cari KATA — cari transaksi berdasarkan deskripsi\n' +
       '/dashboard — buka dashboard web\n' +
       '/language id|en — ganti bahasa\n' +
       '/setup KODE — hubungkan akun baru\n' +
@@ -150,8 +151,9 @@ export const t: Record<Lang, BotStrings> = {
       '*✏️ Edit & delete:*\n' +
       'Reply to any bot confirmation message to edit or delete.\n\n' +
       '*📊 Commands:*\n' +
-      '/rekap — this month summary\n' +
-      '/kategori — list categories\n' +
+      '/summary — this month summary\n' +
+      '/categories — list categories\n' +
+      '/search KEYWORD — search transactions by description\n' +
       '/dashboard — open web dashboard\n' +
       '/language id|en — change language\n' +
       '/setup CODE — link a new account\n' +
