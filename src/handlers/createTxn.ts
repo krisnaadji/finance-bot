@@ -55,13 +55,64 @@ export async function createTxn(
     return;
   }
 
-  const reply = t[lang].txnCreated(
-    ai.payload.description ?? '',
-    formatIDR(ai.payload.amount ?? 0),
-    ai.payload.category ?? '',
-    formatDate(ai.payload.date ?? new Date().toISOString().split('T')[0], lang),
-    ai.payload.type ?? 'expense',
-  );
+  // Check budget warning — only for expense transactions with a known category
+  let budgetWarning = '';
+  if (ai.payload.type === 'expense' && cat?.id) {
+    const { data: budget } = await supabase
+      .from('budgets')
+      .select('amount')
+      .eq('account_id', account.id)
+      .eq('category_id', cat.id)
+      .single();
+
+    if (budget) {
+      // Get current month spending for this category
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .split('T')[0];
+      const to = now.toISOString().split('T')[0];
+
+      const { data: spendRows } = await supabase
+        .from('transactions')
+        .select('amount')
+        .eq('account_id', account.id)
+        .eq('category_id', cat.id)
+        .eq('type', 'expense')
+        .gte('date', from)
+        .lte('date', to);
+
+      const totalSpent = (spendRows ?? []).reduce(
+        (s, r) => s + Number(r.amount),
+        0,
+      );
+      const pct = Math.round((totalSpent / budget.amount) * 100);
+
+      if (totalSpent > budget.amount) {
+        budgetWarning =
+          lang === 'id'
+            ? `\n⚠️ *Budget ${ai.payload.category} terlampaui!*\nRp${formatIDR(totalSpent)} / Rp${formatIDR(budget.amount)} (${pct}%)`
+            : `\n⚠️ *${ai.payload.category} budget exceeded!*\nRp${formatIDR(totalSpent)} / Rp${formatIDR(budget.amount)} (${pct}%)`;
+      } else if (pct >= 80) {
+        budgetWarning =
+          lang === 'id'
+            ? `\n⚠️ Budget ${ai.payload.category}: Rp${formatIDR(totalSpent)} / Rp${formatIDR(budget.amount)} (${pct}%)`
+            : `\n⚠️ ${ai.payload.category} budget: Rp${formatIDR(totalSpent)} / Rp${formatIDR(budget.amount)} (${pct}%)`;
+      }
+    }
+  }
+
+  const reply =
+    t[lang].txnCreated(
+      ai.payload.description ?? '',
+      formatIDR(ai.payload.amount ?? 0),
+      ai.payload.category ?? '',
+      formatDate(
+        ai.payload.date ?? new Date().toISOString().split('T')[0],
+        lang,
+      ),
+      ai.payload.type ?? 'expense',
+    ) + budgetWarning;
 
   const botMessageId = await sendWA(msg.chatId, reply);
 
