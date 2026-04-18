@@ -1,6 +1,7 @@
 import { supabase } from './services/supabase';
 import { sendWA } from './services/whatsapp';
 import { callGemini } from './ai/gemini';
+import { logger } from './utils/logger';
 import { resolveLang, SUPPORTED_LANGS, Lang } from './utils/lang';
 import { isYesNo } from './utils/format';
 import { t } from './i18n/bot';
@@ -155,12 +156,10 @@ export async function routeMessage(msg: IncomingMessage) {
       .eq('wa_bot_message_id', msg.repliedToId)
       .order('created_at');
 
-    console.log(
-      '[DEBUG] repliedToId:',
-      msg.repliedToId,
-      '| multiples found:',
-      multiples?.length ?? 0,
-    );
+    logger.debug('router', 'reply_lookup', {
+      messageId: msg.repliedToId,
+      matches: multiples?.length ?? 0,
+    });
 
     if (multiples && multiples.length > 1) {
       const context = multiples

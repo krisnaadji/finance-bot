@@ -4,6 +4,7 @@ dotenv.config(); // must be first — loads env before any other imports
 import express, { Request } from 'express';
 
 import { webhookRouter } from './webhook';
+import { logger } from './utils/logger';
 
 const app = express();
 
@@ -24,4 +25,4 @@ app.get('/health', (_, res) =>
 );
 
 const port = process.env.PORT || 3001;
-app.listen(port, () => console.log('Bot backend running on port ' + port));
+app.listen(port, () => logger.info('server', 'listening', { port }));

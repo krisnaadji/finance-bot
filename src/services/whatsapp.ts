@@ -1,3 +1,5 @@
+import { logger, redactPhone } from '../utils/logger';
+
 // Returns the WhatsApp message ID of the sent message.
 // We store this so users can reply to confirmations for edit/delete.
 export async function sendWA(to: string, text: string): Promise<string> {
@@ -11,7 +13,7 @@ export async function sendWA(to: string, text: string): Promise<string> {
 
 // ── Fonnte ───────────────────────────────────────────────────────────
 async function sendViaFonnte(to: string, text: string): Promise<string> {
-  console.log('Sending via Fonnte to:', to);
+  logger.debug('whatsapp', 'sending', { gateway: 'fonnte', to: redactPhone(to) });
 
   const formData = new URLSearchParams();
   formData.append('target', to);

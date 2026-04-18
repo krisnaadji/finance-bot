@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 
 import { routeMessage } from './router';
 import { IncomingMessage } from './ai/types';
+import { logger, safeSummarizeMsg } from './utils/logger';
 import { verifyMetaSignature, verifyFonnteToken } from './utils/webhookAuth';
 
 export const webhookRouter = Router();
@@ -27,23 +28,23 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
   if (gateway === 'fonnte') {
     const expected = process.env.FONNTE_WEBHOOK_TOKEN;
     if (!expected) {
-      console.error('[webhook] FONNTE_WEBHOOK_TOKEN not set — rejecting all requests');
+      logger.error('webhook', 'misconfigured_no_fonnte_token');
       return res.status(500).send('Server misconfigured');
     }
     if (!verifyFonnteToken(req, expected)) {
-      console.warn('[webhook] Fonnte token mismatch — rejecting request');
+      logger.warn('webhook', 'fonnte_token_mismatch');
       return res.status(401).send('Unauthorized');
     }
   } else {
     const appSecret = process.env.WA_APP_SECRET;
     if (!appSecret) {
-      console.error('[webhook] WA_APP_SECRET not set — rejecting all requests');
+      logger.error('webhook', 'misconfigured_no_app_secret');
       return res.status(500).send('Server misconfigured');
     }
     const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
     const signature = req.get('x-hub-signature-256');
     if (!verifyMetaSignature(rawBody, signature, appSecret)) {
-      console.warn('[webhook] Meta signature mismatch — rejecting request');
+      logger.warn('webhook', 'meta_signature_mismatch');
       return res.status(401).send('Unauthorized');
     }
   }
@@ -57,7 +58,7 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
       await handleMetaWebhook(req.body);
     }
   } catch (err) {
-    console.error('Webhook processing error:', err);
+    logger.error('webhook', 'processing_error', err);
   }
 });
 
@@ -78,7 +79,7 @@ async function handleFonnteWebhook(body: any) {
     rawFrom: body.sender,
   };
 
-  console.log('Fonnte webhook hit:', JSON.stringify(msg, null, 2));
+  logger.debug('webhook', 'fonnte_received', safeSummarizeMsg(msg));
   await routeMessage(msg);
 }
 
@@ -102,6 +103,6 @@ async function handleMetaWebhook(body: any) {
     rawFrom: waMsg.from,
   };
 
-  console.log('Meta webhook hit:', JSON.stringify(msg, null, 2));
+  logger.debug('webhook', 'meta_received', safeSummarizeMsg(msg));
   await routeMessage(msg);
 }
