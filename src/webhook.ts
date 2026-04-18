@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
+
 import { routeMessage } from './router';
 import { IncomingMessage } from './ai/types';
+import { verifyMetaSignature, verifyFonnteToken } from './utils/webhookAuth';
 
 export const webhookRouter = Router();
 
@@ -16,11 +18,39 @@ webhookRouter.get('/', (req: Request, res: Response) => {
   }
 });
 
-// POST: incoming messages
+// POST: incoming messages — verify signature BEFORE ACK so forged requests
+// get 401 (and Meta/Fonnte surfaces this in their dashboards). Only after
+// a successful verification do we ACK 200 and process async.
 webhookRouter.post('/', async (req: Request, res: Response) => {
-  res.sendStatus(200); // Always ACK immediately
+  const gateway = process.env.GATEWAY ?? 'meta';
+
+  if (gateway === 'fonnte') {
+    const expected = process.env.FONNTE_WEBHOOK_TOKEN;
+    if (!expected) {
+      console.error('[webhook] FONNTE_WEBHOOK_TOKEN not set — rejecting all requests');
+      return res.status(500).send('Server misconfigured');
+    }
+    if (!verifyFonnteToken(req, expected)) {
+      console.warn('[webhook] Fonnte token mismatch — rejecting request');
+      return res.status(401).send('Unauthorized');
+    }
+  } else {
+    const appSecret = process.env.WA_APP_SECRET;
+    if (!appSecret) {
+      console.error('[webhook] WA_APP_SECRET not set — rejecting all requests');
+      return res.status(500).send('Server misconfigured');
+    }
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    const signature = req.get('x-hub-signature-256');
+    if (!verifyMetaSignature(rawBody, signature, appSecret)) {
+      console.warn('[webhook] Meta signature mismatch — rejecting request');
+      return res.status(401).send('Unauthorized');
+    }
+  }
+
+  // Signature valid: ACK immediately, then process async (Meta expects <5s).
+  res.sendStatus(200);
   try {
-    const gateway = process.env.GATEWAY ?? 'meta';
     if (gateway === 'fonnte') {
       await handleFonnteWebhook(req.body);
     } else {
