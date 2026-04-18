@@ -58,7 +58,7 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
       await handleMetaWebhook(req.body);
     }
   } catch (err) {
-    logger.error('webhook', 'processing_error', err);
+    logger.error('webhook', 'processing_error', err, { gateway });
   }
 });
 

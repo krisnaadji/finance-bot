@@ -4,7 +4,7 @@
  * Goals:
  *   - Never write raw phone numbers, message text, or full request bodies.
  *   - Keep logs structured enough to be useful for debugging (ids, lengths,
- *     redacted tails) without leaking user data to Render logs or Sentry.
+ *     redacted tails) without leaking user data to Render logs.
  *   - Respect LOG_LEVEL so noisy `debug` calls disappear in production.
  *
  * Levels (ascending): debug < info < warn < error.
@@ -111,9 +111,40 @@ function log(level: Level, scope: string, event: string, data?: unknown): void {
   }
 }
 
+/**
+ * Log an error with optional structured context.
+ *
+ * `err` should ideally be an Error (its scrubbed stack is included); if it
+ * isn't one, `String(err)` is captured under `value`. `context` is any
+ * extra scrubbed data — UUIDs, enums, redacted phones — that helps
+ * diagnose the failure.
+ */
+function logError(
+  scope: string,
+  event: string,
+  err?: unknown,
+  context?: Record<string, unknown>,
+): void {
+  const hasErr = err !== undefined;
+  const scrubbed = hasErr
+    ? err instanceof Error
+      ? scrubError(err)
+      : { value: String(err) }
+    : undefined;
+
+  const data: Record<string, unknown> | undefined = hasErr
+    ? context
+      ? { ...context, err: scrubbed }
+      : { err: scrubbed }
+    : context;
+
+  log('error', scope, event, data);
+}
+
 export const logger = {
   debug: (scope: string, event: string, data?: unknown) => log('debug', scope, event, data),
   info: (scope: string, event: string, data?: unknown) => log('info', scope, event, data),
   warn: (scope: string, event: string, data?: unknown) => log('warn', scope, event, data),
-  error: (scope: string, event: string, data?: unknown) => log('error', scope, event, data),
+  error: (scope: string, event: string, err?: unknown, context?: Record<string, unknown>) =>
+    logError(scope, event, err, context),
 };
