@@ -60,5 +60,26 @@ export async function callGroq(
   const json = await res.json();
   const text = json.choices?.[0]?.message?.content ?? '';
   const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean) as AIResponse;
+  const result = JSON.parse(clean) as AIResponse;
+
+  // Normalize type: LLaMA may return Indonesian ("Pengeluaran"/"Pemasukan")
+  const normalizeType = (v: string | undefined) => {
+    if (!v) return v;
+    const lower = v.toLowerCase();
+    if (lower === 'pemasukan' || lower === 'income') return 'income';
+    if (lower === 'pengeluaran' || lower === 'expense') return 'expense';
+    return v;
+  };
+
+  if (result.payload?.type) {
+    result.payload.type = normalizeType(result.payload.type) as 'income' | 'expense';
+  }
+  if (result.transactions) {
+    result.transactions = result.transactions.map((t) => ({
+      ...t,
+      type: normalizeType(t.type) as 'income' | 'expense',
+    }));
+  }
+
+  return result;
 }

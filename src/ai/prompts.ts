@@ -62,6 +62,7 @@ export function buildPrompt(
     '',
     'Rules:',
     ...rules.map((r: string) => '- ' + r),
+    '- type field MUST be "income" or "expense" (English only, never Indonesian)',
     '- Single transaction → CREATE_TRANSACTION with payload',
     '- Multiple transactions in one message → CREATE_MULTIPLE with transactions array',
     '- If multiContext present → user editing one transaction → EDIT_FROM_MULTIPLE',
