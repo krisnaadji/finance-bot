@@ -3,7 +3,7 @@ import { buildPrompt } from './prompts';
 import { Lang } from '../utils/lang';
 import { AIResponse, Account, TxnForBot } from './types';
 
-export async function callGemini(
+export async function callGroq(
   message: string,
   account: Account,
   lang: Lang,
@@ -11,7 +11,7 @@ export async function callGemini(
   multiContext?: string,
 ): Promise<AIResponse> {
   const apiKey = process.env.AI_API_KEY;
-  const model = process.env.AI_MODEL || 'gemini-2.5-flash-lite';
+  const model = process.env.AI_MODEL || 'llama-3.1-8b-instant';
   if (!apiKey) throw new Error('AI_API_KEY not set');
 
   const { data: cats } = await supabase
@@ -40,25 +40,24 @@ export async function callGemini(
 
   const prompt = buildPrompt(message, lang, categories, replyContext, multiContext);
 
-  const url =
-    'https://generativelanguage.googleapis.com/v1beta/models/' +
-    model +
-    ':generateContent?key=' +
-    apiKey;
-
-  const res = await fetch(url, {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey,
+    },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 512 },
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 512,
     }),
   });
 
-  if (!res.ok) throw new Error('Gemini API error: ' + (await res.text()));
+  if (!res.ok) throw new Error('Groq API error: ' + (await res.text()));
 
   const json = await res.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  const text = json.choices?.[0]?.message?.content ?? '';
   const clean = text.replace(/```json|```/g, '').trim();
   return JSON.parse(clean) as AIResponse;
 }

@@ -77,7 +77,7 @@ vi.mock('../src/services/supabase', () => ({
   supabase: buildSupabaseMock(mocks.supabaseRows),
 }));
 vi.mock('../src/services/whatsapp', () => ({ sendWA: mocks.sendWA }));
-vi.mock('../src/ai/gemini', () => ({ callGemini: mocks.callGemini }));
+vi.mock('../src/ai', () => ({ callAI: mocks.callGemini }));
 vi.mock('../src/handlers', () => mocks.handlers);
 
 // Import AFTER mocks. Default account is set before any test runs.

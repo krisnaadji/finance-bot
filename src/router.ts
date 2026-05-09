@@ -1,6 +1,6 @@
 import { supabase } from './services/supabase';
 import { sendWA } from './services/whatsapp';
-import { callGemini } from './ai/gemini';
+import { callAI } from './ai';
 import { logger } from './utils/logger';
 import { resolveLang, SUPPORTED_LANGS, Lang } from './utils/lang';
 import { isYesNo } from './utils/format';
@@ -179,7 +179,7 @@ export async function routeMessage(msg: IncomingMessage) {
         )
         .join('\n');
 
-      const ai = await callGemini(text, account, lang, undefined, context);
+      const ai = await callAI(text, account, lang, undefined, context);
       const selIdx = (ai as any).selection_index ?? ai.payload?.selection_index;
 
       // Handle edit — accept both EDIT_FROM_MULTIPLE and EDIT_TRANSACTION
@@ -209,7 +209,7 @@ export async function routeMessage(msg: IncomingMessage) {
     // Single transaction reply — existing flow
     const txn = await findTxnByReply(msg.repliedToId, account.id);
     if (txn) {
-      const ai = await callGemini(text, account, lang, txn);
+      const ai = await callAI(text, account, lang, txn);
       if (ai.action === 'EDIT_TRANSACTION')
         return editTxn(ai, txn.id, account, msg, lang);
       if (ai.action === 'DELETE_TRANSACTION')
@@ -218,7 +218,7 @@ export async function routeMessage(msg: IncomingMessage) {
   }
 
   // New message — send to AI for classification
-  const ai = await callGemini(text, account, lang);
+  const ai = await callAI(text, account, lang);
   switch (ai.action) {
     case 'CREATE_TRANSACTION':
       return createTxn(ai, account, msg, lang);
