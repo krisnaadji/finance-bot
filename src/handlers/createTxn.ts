@@ -4,6 +4,7 @@ import { formatIDR, formatDate } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { t } from '../i18n/bot';
 import { AIResponse, Account, IncomingMessage } from '../ai/types';
+import { logger } from '../utils/logger';
 
 export async function createTxn(
   ai: AIResponse,
@@ -46,6 +47,13 @@ export async function createTxn(
     .single();
 
   if (error || !txn) {
+    logger.error('createTxn', 'insert_failed', error, {
+      action: ai.action,
+      amount: ai.payload.amount,
+      type: ai.payload.type,
+      category: ai.payload.category,
+      date: ai.payload.date,
+    });
     await sendWA(
       msg.chatId,
       lang === 'id'
