@@ -51,6 +51,23 @@ export function buildPrompt(
     'Available income categories: ' + categories.income.join(', '),
     'Available expense categories: ' + categories.expense.join(', '),
     '',
+    'Examples (Indonesian → correct JSON):',
+    '- "makan siang 25k" → {"action":"CREATE_TRANSACTION","payload":{"amount":25000,"type":"expense","category":"Kebutuhan Pokok","description":"makan siang","date":"' +
+      today +
+      '"}}',
+    '- "gojek 15rb" → {"action":"CREATE_TRANSACTION","payload":{"amount":15000,"type":"expense","category":"Transportasi","description":"gojek","date":"' +
+      today +
+      '"}}',
+    '- "gaji bulan ini 5jt" → {"action":"CREATE_TRANSACTION","payload":{"amount":5000000,"type":"income","category":"Gaji","description":"gaji bulan ini","date":"' +
+      today +
+      '"}}',
+    '- "beli obat 30k" → {"action":"CREATE_TRANSACTION","payload":{"amount":30000,"type":"expense","category":"Kesehatan","description":"beli obat","date":"' +
+      today +
+      '"}}',
+    '- "bayar listrik 200k" → {"action":"CREATE_TRANSACTION","payload":{"amount":200000,"type":"expense","category":"Tagihan","description":"bayar listrik","date":"' +
+      today +
+      '"}}',
+    '',
     'Return ONLY valid JSON. No markdown, no extra text.',
     '{',
     '  action: CREATE_TRANSACTION | CREATE_MULTIPLE | EDIT_FROM_MULTIPLE',
