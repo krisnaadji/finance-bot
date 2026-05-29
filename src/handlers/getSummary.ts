@@ -3,31 +3,7 @@ import { sendWA } from '../services/whatsapp';
 import { formatIDR } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { AIResponse, Account, IncomingMessage } from '../ai/types';
-
-function getPeriodDates(period: string): { from: string; to: string } {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  if (period === 'last_month') {
-    return {
-      from: new Date(y, m - 1, 1).toISOString().split('T')[0],
-      to: new Date(y, m, 0).toISOString().split('T')[0],
-    };
-  }
-  if (period === 'this_week') {
-    const day = now.getDay() || 7;
-    const mon = new Date(now);
-    mon.setDate(now.getDate() - day + 1);
-    return {
-      from: mon.toISOString().split('T')[0],
-      to: now.toISOString().split('T')[0],
-    };
-  }
-  return {
-    from: new Date(y, m, 1).toISOString().split('T')[0],
-    to: now.toISOString().split('T')[0],
-  };
-}
+import { resolveSummaryPeriod } from './summaryPeriod';
 
 export async function getSummary(
   ai: AIResponse,
@@ -36,7 +12,25 @@ export async function getSummary(
   lang: Lang,
 ) {
   const period = ai.payload.period || 'this_month';
-  const { from, to } = getPeriodDates(period);
+  const periodResult = await resolveSummaryPeriod(period, account.id, {
+    salaryMonth: ai.payload.salary_month,
+    salaryYear: ai.payload.salary_year,
+  });
+
+  if (!periodResult.ok) {
+    const reply =
+      periodResult.reason === 'salary_not_found'
+        ? lang === 'id'
+          ? 'Belum ada pemasukan kategori *Gaji*. Catat gaji dulu, lalu coba */rekap gaji*.'
+          : 'No income transaction categorized as *Gaji* was found. Record salary first, then try */summary salary*.'
+        : lang === 'id'
+          ? 'Gagal mengambil periode ringkasan.'
+          : 'Failed to resolve summary period.';
+    await sendWA(msg.chatId, reply);
+    return;
+  }
+
+  const { from, to } = periodResult;
 
   const { data: txns } = await supabase
     .from('transactions')
@@ -47,15 +41,15 @@ export async function getSummary(
 
   const rows = txns ?? [];
   const income = rows
-    .filter((t) => t.type === 'income')
-    .reduce((s, t) => s + Number(t.amount), 0);
+    .filter((txn) => txn.type === 'income')
+    .reduce((sum, txn) => sum + Number(txn.amount), 0);
   const expense = rows
-    .filter((t) => t.type === 'expense')
-    .reduce((s, t) => s + Number(t.amount), 0);
+    .filter((txn) => txn.type === 'expense')
+    .reduce((sum, txn) => sum + Number(txn.amount), 0);
   const net = income - expense;
 
   const byCategory: Record<string, number> = {};
-  for (const txn of rows.filter((t) => t.type === 'expense')) {
+  for (const txn of rows.filter((row) => row.type === 'expense')) {
     const name = (txn.categories as any)?.name ?? 'Lainnya';
     byCategory[name] = (byCategory[name] ?? 0) + Number(txn.amount);
   }
@@ -72,24 +66,33 @@ export async function getSummary(
         '\n' +
         topCategories
           .map(
-            (c, i) =>
-              i +
+            (category, index) =>
+              index +
               1 +
               '. ' +
-              c[0] +
-              ' — Rp' +
-              formatIDR(c[1]) +
+              category[0] +
+              ' - Rp' +
+              formatIDR(category[1]) +
               ' (' +
-              Math.round((c[1] / expense) * 100) +
+              Math.round((category[1] / expense) * 100) +
               '%)',
           )
           .join('\n')
       : '';
 
   const dashUrl = process.env.DASHBOARD_URL ?? '';
+  const titleId =
+    periodResult.label === 'salary_cycle'
+      ? 'Ringkasan Sejak Gaji '
+      : 'Ringkasan ';
+  const titleEn =
+    periodResult.label === 'salary_cycle'
+      ? 'Summary Since Salary '
+      : 'Summary ';
   const reply =
     lang === 'id'
-      ? '📊 *Ringkasan ' +
+      ? '📊 *' +
+        titleId +
         from +
         ' s/d ' +
         to +
@@ -104,7 +107,8 @@ export async function getSummary(
         netStr +
         catLines +
         (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '')
-      : '📊 *Summary ' +
+      : '📊 *' +
+        titleEn +
         from +
         ' to ' +
         to +

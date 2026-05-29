@@ -105,10 +105,19 @@ beforeEach(() => {
 // ── Slash commands: bypass Gemini entirely ───────────────────────────
 
 describe('slash commands', () => {
-  it('/help sends help text without calling Gemini', async () => {
+  it('/help sends numbered command help without calling Gemini', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-1');
+
     await routeMessage(buildMsg({ text: '/help' }));
+
     expect(mocks.callGemini).not.toHaveBeenCalled();
     expect(mocks.sendWA).toHaveBeenCalledTimes(1);
+    const textArg = mocks.sendWA.mock.calls[0][1] as string;
+    expect(textArg).toContain('Perintah Finance Bot');
+    expect(textArg).toContain('1');
+    expect(textArg).toContain('/rekap');
+    expect(textArg).toContain('/rekap gaji');
+    expect(textArg).toContain('membalas angka');
   });
 
   it('/rekap routes to getSummary with this_month', async () => {
@@ -123,6 +132,41 @@ describe('slash commands', () => {
   it('/summary (English alias) also routes to getSummary', async () => {
     await routeMessage(buildMsg({ text: '/summary' }));
     expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('/rekap gaji routes to getSummary with salary_cycle', async () => {
+    await routeMessage(buildMsg({ text: '/rekap gaji' }));
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+    expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+    const aiArg = mocks.handlers.getSummary.mock.calls[0][0] as AIResponse;
+    expect(aiArg.action).toBe('GET_SUMMARY');
+    expect(aiArg.payload.period).toBe('salary_cycle');
+  });
+
+  it('/summary salary routes to getSummary with salary_cycle', async () => {
+    await routeMessage(buildMsg({ text: '/summary salary' }));
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+    expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+    const aiArg = mocks.handlers.getSummary.mock.calls[0][0] as AIResponse;
+    expect(aiArg.payload.period).toBe('salary_cycle');
+  });
+
+  it('/rekap gaji parses optional month and year arguments', async () => {
+    await routeMessage(buildMsg({ text: '/rekap gaji apr 25' }));
+    expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+    const aiArg = mocks.handlers.getSummary.mock.calls[0][0] as AIResponse;
+    expect(aiArg.payload.period).toBe('salary_cycle');
+    expect(aiArg.payload.salary_month).toBe(4);
+    expect(aiArg.payload.salary_year).toBe(2025);
+  });
+
+  it('/rekap gajian is not treated as the salary-cycle command', async () => {
+    mocks.callGemini.mockResolvedValue({ action: 'CHITCHAT', payload: {} });
+
+    await routeMessage(buildMsg({ text: '/rekap gajian' }));
+
+    expect(mocks.handlers.getSummary).not.toHaveBeenCalled();
+    expect(mocks.callGemini).toHaveBeenCalledTimes(1);
   });
 
   it('/kategori routes to getCategories', async () => {
@@ -142,6 +186,89 @@ describe('slash commands', () => {
     mocks.supabaseRows.account = null;
     await routeMessage(buildMsg({ text: '/setup personal MyAccount' }));
     expect(mocks.handlers.setup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('help command number replies', () => {
+  it('replying 1 to a help message executes this month summary', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-1');
+    await routeMessage(buildMsg({ text: '/help' }));
+    resetAllSpies();
+
+    await routeMessage(
+      buildMsg({ text: '1', repliedToId: 'help-bot-msg-1' }),
+    );
+
+    expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+    const aiArg = mocks.handlers.getSummary.mock.calls[0][0] as AIResponse;
+    expect(aiArg.payload.period).toBe('this_month');
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+  });
+
+  it('replying 2 to a help message executes salary-cycle summary', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-2');
+    await routeMessage(buildMsg({ text: '/help' }));
+    resetAllSpies();
+
+    await routeMessage(
+      buildMsg({ text: '2', repliedToId: 'help-bot-msg-2' }),
+    );
+
+    expect(mocks.handlers.getSummary).toHaveBeenCalledTimes(1);
+    const aiArg = mocks.handlers.getSummary.mock.calls[0][0] as AIResponse;
+    expect(aiArg.payload.period).toBe('salary_cycle');
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+  });
+
+  it('replying 4 to a help message sends a search hint', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-4');
+    await routeMessage(buildMsg({ text: '/help' }));
+    resetAllSpies();
+
+    await routeMessage(
+      buildMsg({ text: '4', repliedToId: 'help-bot-msg-4' }),
+    );
+
+    expect(mocks.sendWA).toHaveBeenCalledTimes(1);
+    expect(mocks.sendWA.mock.calls[0][1]).toContain('/cari');
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+  });
+
+  it('replying 6 to a help message sends a language hint', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-6');
+    await routeMessage(buildMsg({ text: '/help' }));
+    resetAllSpies();
+
+    await routeMessage(
+      buildMsg({ text: '6', repliedToId: 'help-bot-msg-6' }),
+    );
+
+    expect(mocks.sendWA).toHaveBeenCalledTimes(1);
+    expect(mocks.sendWA.mock.calls[0][1]).toContain('/language');
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+  });
+
+  it('replying 7 to a help message sends a setup hint', async () => {
+    mocks.sendWA.mockResolvedValue('help-bot-msg-7');
+    await routeMessage(buildMsg({ text: '/help' }));
+    resetAllSpies();
+
+    await routeMessage(
+      buildMsg({ text: '7', repliedToId: 'help-bot-msg-7' }),
+    );
+
+    expect(mocks.sendWA).toHaveBeenCalledTimes(1);
+    expect(mocks.sendWA.mock.calls[0][1]).toContain('/setup');
+    expect(mocks.callGemini).not.toHaveBeenCalled();
+  });
+
+  it('a normal 2 message without replying to help does not execute help shortcut', async () => {
+    mocks.callGemini.mockResolvedValue({ action: 'CHITCHAT', payload: {} });
+
+    await routeMessage(buildMsg({ text: '2', repliedToId: null }));
+
+    expect(mocks.handlers.getSummary).not.toHaveBeenCalled();
+    expect(mocks.callGemini).toHaveBeenCalledTimes(1);
   });
 });
 

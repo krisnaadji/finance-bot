@@ -6,6 +6,8 @@ export interface AIPayload {
   date?: string;
   selection_index?: number; // 1-based index for EDIT_FROM_MULTIPLE
   period?: string;
+  salary_month?: number;
+  salary_year?: number;
   category_name?: string;
   category_type?: string;
 }
