@@ -76,6 +76,11 @@ export const t: Record<Lang, BotStrings> = {
       '.',
     helpText:
       '📖 *Perintah Finance Bot*\n\n' +
+      '*📝 Catat transaksi:*\n' +
+      'Cukup ketik transaksi kamu, contoh:\n' +
+      '_makan siang 35k_\n' +
+      '_gaji masuk 5jt_\n' +
+      '_kemarin bayar listrik 150rb_\n\n' +
       '1. Ringkasan bulan ini\n' +
       '   /rekap\n\n' +
       '2. Ringkasan sejak gaji terakhir\n' +
@@ -144,6 +149,11 @@ export const t: Record<Lang, BotStrings> = {
       '.',
     helpText:
       '📖 *Finance Bot Commands*\n\n' +
+      '*📝 Record transactions:*\n' +
+      'Just type your transaction, e.g.:\n' +
+      '_lunch 35k_\n' +
+      '_received salary 5jt_\n' +
+      '_paid electricity bill 150rb yesterday_\n\n' +
       '1. This month summary\n' +
       '   /summary\n\n' +
       '2. Summary since latest salary\n' +

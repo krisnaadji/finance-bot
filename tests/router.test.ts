@@ -114,6 +114,9 @@ describe('slash commands', () => {
     expect(mocks.sendWA).toHaveBeenCalledTimes(1);
     const textArg = mocks.sendWA.mock.calls[0][1] as string;
     expect(textArg).toContain('Perintah Finance Bot');
+    expect(textArg).toContain('Catat transaksi');
+    expect(textArg).toContain('makan siang 35k');
+    expect(textArg).toContain('gaji masuk 5jt');
     expect(textArg).toContain('1');
     expect(textArg).toContain('/rekap');
     expect(textArg).toContain('/rekap gaji');
