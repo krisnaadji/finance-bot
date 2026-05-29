@@ -7,6 +7,13 @@ import { isYesNo } from './utils/format';
 import { t } from './i18n/bot';
 import { IncomingMessage } from './ai/types';
 import {
+  helpShortcutHint,
+  resolveHelpShortcut,
+  sendHelp,
+  summaryShortcutAi,
+} from './handlers/helpMenu';
+import { parseSalaryPeriodArgs } from './handlers/salaryPeriodArgs';
+import {
   createTxn,
   createMultiple,
   editTxn,
@@ -91,7 +98,7 @@ export async function routeMessage(msg: IncomingMessage) {
   const lang: Lang = resolveLang(account.language, memberPref);
 
   // /help
-  if (text === '/help') return sendWA(msg.chatId, t[lang].helpText);
+  if (text === '/help') return sendHelp(msg, lang);
 
   // /language id|en
   if (text.startsWith('/language')) {
@@ -121,6 +128,74 @@ export async function routeMessage(msg: IncomingMessage) {
           url +
           '\n\nView summaries, transactions, and manage your account here.';
     return sendWA(msg.chatId, reply);
+  }
+
+  const helpShortcut = resolveHelpShortcut(msg);
+  if (helpShortcut === 'summary') {
+    return getSummary(summaryShortcutAi('this_month'), account, msg, lang);
+  }
+  if (helpShortcut === 'salary_summary') {
+    return getSummary(summaryShortcutAi('salary_cycle'), account, msg, lang);
+  }
+  if (helpShortcut === 'categories') return getCategories(account, msg, lang);
+  if (helpShortcut === 'dashboard') {
+    const url = process.env.DASHBOARD_URL ?? 'Not configured';
+    const reply =
+      lang === 'id'
+        ? '📱 *Dashboard Finance Bot*\n\n' +
+          url +
+          '\n\nLihat ringkasan, transaksi, dan kelola akun di sini.'
+        : '📱 *Finance Bot Dashboard*\n\n' +
+          url +
+          '\n\nView summaries, transactions, and manage your account here.';
+    return sendWA(msg.chatId, reply);
+  }
+  if (
+    helpShortcut === 'search_hint' ||
+    helpShortcut === 'language_hint' ||
+    helpShortcut === 'setup_hint'
+  ) {
+    return sendWA(msg.chatId, helpShortcutHint(helpShortcut, lang));
+  }
+
+  const salarySummaryArgs =
+    text === '/rekap gaji'
+      ? ''
+      : text.startsWith('/rekap gaji ')
+        ? text.slice('/rekap gaji'.length)
+        : text === '/summary salary'
+          ? ''
+          : text.startsWith('/summary salary ')
+            ? text.slice('/summary salary'.length)
+            : null;
+
+  // /rekap gaji or /summary salary shortcut
+  if (salarySummaryArgs !== null) {
+    const args = salarySummaryArgs;
+    const parsed = parseSalaryPeriodArgs(args);
+
+    if (!parsed.ok) {
+      return sendWA(
+        msg.chatId,
+        lang === 'id'
+          ? 'Format: */rekap gaji [bulan] [tahun]*. Contoh: */rekap gaji apr 25*'
+          : 'Format: */summary salary [month] [year]*. Example: */summary salary apr 25*',
+      );
+    }
+
+    return getSummary(
+      {
+        action: 'GET_SUMMARY',
+        payload: {
+          period: 'salary_cycle',
+          salary_month: parsed.month,
+          salary_year: parsed.year,
+        },
+      },
+      account,
+      msg,
+      lang,
+    );
   }
 
   // /rekap or /summary shortcut

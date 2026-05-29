@@ -75,22 +75,28 @@ export const t: Record<Lang, BotStrings> = {
       (lang === 'id' ? 'Bahasa Indonesia' : 'English') +
       '.',
     helpText:
-      '📖 *Panduan Bot Keuangan:*\n\n' +
+      '📖 *Perintah Finance Bot*\n\n' +
       '*📝 Catat transaksi:*\n' +
       'Cukup ketik transaksi kamu, contoh:\n' +
       '_makan siang 35k_\n' +
       '_gaji masuk 5jt_\n' +
       '_kemarin bayar listrik 150rb_\n\n' +
-      '*✏️ Edit & hapus:*\n' +
-      'Balas pesan konfirmasi bot untuk edit atau hapus.\n\n' +
-      '*📊 Perintah:*\n' +
-      '/rekap — ringkasan bulan ini\n' +
-      '/kategori — lihat semua kategori\n' +
-      '/cari KATA — cari transaksi berdasarkan deskripsi\n' +
-      '/dashboard — buka dashboard web\n' +
-      '/language id|en — ganti bahasa\n' +
-      '/setup KODE — hubungkan akun baru\n' +
-      '/help — tampilkan bantuan ini',
+      '1. Ringkasan bulan ini\n' +
+      '   /rekap\n\n' +
+      '2. Ringkasan sejak gaji terakhir\n' +
+      '   /rekap gaji\n\n' +
+      '3. Daftar kategori\n' +
+      '   /kategori\n\n' +
+      '4. Cari transaksi\n' +
+      '   /cari KATA\n\n' +
+      '5. Dashboard\n' +
+      '   /dashboard\n\n' +
+      '6. Ganti bahasa\n' +
+      '   /language id|en\n\n' +
+      '7. Hubungkan akun\n' +
+      '   /setup KODE\n\n' +
+      'Kamu juga bisa menjalankan perintah dengan membalas angka di atas.\n' +
+      'Contoh: balas 2 untuk ringkasan sejak gaji terakhir.',
   },
   en: {
     txnCreated: (desc, amount, cat, date, type) =>
@@ -142,21 +148,27 @@ export const t: Record<Lang, BotStrings> = {
       (lang === 'en' ? 'English' : 'Bahasa Indonesia') +
       '.',
     helpText:
-      '📖 *Finance Bot Guide:*\n\n' +
+      '📖 *Finance Bot Commands*\n\n' +
       '*📝 Record transactions:*\n' +
       'Just type your transaction, e.g.:\n' +
       '_lunch 35k_\n' +
       '_received salary 5jt_\n' +
       '_paid electricity bill 150rb yesterday_\n\n' +
-      '*✏️ Edit & delete:*\n' +
-      'Reply to any bot confirmation message to edit or delete.\n\n' +
-      '*📊 Commands:*\n' +
-      '/summary — this month summary\n' +
-      '/categories — list categories\n' +
-      '/search KEYWORD — search transactions by description\n' +
-      '/dashboard — open web dashboard\n' +
-      '/language id|en — change language\n' +
-      '/setup CODE — link a new account\n' +
-      '/help — show this help',
+      '1. This month summary\n' +
+      '   /summary\n\n' +
+      '2. Summary since latest salary\n' +
+      '   /summary salary\n\n' +
+      '3. Categories\n' +
+      '   /categories\n\n' +
+      '4. Search transactions\n' +
+      '   /search KEYWORD\n\n' +
+      '5. Dashboard\n' +
+      '   /dashboard\n\n' +
+      '6. Change language\n' +
+      '   /language id|en\n\n' +
+      '7. Link account\n' +
+      '   /setup CODE\n\n' +
+      'You can also run a command by replying with the number above.\n' +
+      'Example: reply 2 for the latest salary-cycle summary.',
   },
 };
