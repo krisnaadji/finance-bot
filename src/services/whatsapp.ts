@@ -58,6 +58,6 @@ async function sendViaMeta(to: string, text: string): Promise<string> {
   );
 
   if (!res.ok) throw new Error('WhatsApp send failed: ' + (await res.text()));
-  const data = await res.json();
+  const data = (await res.json()) as { messages?: Array<{ id?: string }> };
   return data.messages?.[0]?.id ?? '';
 }

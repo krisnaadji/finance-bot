@@ -57,7 +57,9 @@ export async function callGemini(
 
   if (!res.ok) throw new Error('Gemini API error: ' + (await res.text()));
 
-  const json = await res.json();
+  const json = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
   const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   const clean = text.replace(/```json|```/g, '').trim();
   return JSON.parse(clean) as AIResponse;
