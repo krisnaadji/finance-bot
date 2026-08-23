@@ -143,9 +143,11 @@ WA_APP_SECRET=xxxx                    # REQUIRED — HMAC signs inbound POSTs
 # Bot rejects POSTs if unset while GATEWAY=fonnte.
 FONNTE_WEBHOOK_TOKEN=your-fonnte-webhook-token
 
-# AI
-GEMINI_API_KEY=AIza...
-GEMINI_MODEL=gemini-2.5-flash-lite
+# AI provider — "groq" (default) or "gemini"
+AI_PROVIDER=groq
+AI_API_KEY=your-provider-api-key
+# Optional. Defaults per provider: groq=llama-3.3-70b-versatile, gemini=gemini-2.5-flash-lite
+AI_MODEL=
 
 # Dashboard URL (for /dashboard command and /summary footer)
 DASHBOARD_URL=https://your-app.vercel.app
@@ -154,8 +156,6 @@ DASHBOARD_URL=https://your-app.vercel.app
 # Defaults: `info` in production, `debug` otherwise.
 # Production logs are PII-safe (phones masked, message text summarized).
 # LOG_LEVEL=info
-
-PORT=3001
 ```
 
 ---
@@ -223,7 +223,7 @@ npm run test:watch      # Vitest in watch mode
 npm run test:typecheck  # Type-check tests via tsconfig.test.json
 ```
 
-> **Note:** tests mock Supabase, Gemini, and WhatsApp — no quota is burned. For true integration runs against real Gemini, use a separate Google Cloud project and set `GEMINI_API_KEY_TEST`.
+> **Note:** tests mock Supabase, the AI provider, and WhatsApp — no quota is burned. For true integration runs against a real provider, use a separate project/account and set `AI_API_KEY`.
 
 ---
 
