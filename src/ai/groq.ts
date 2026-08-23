@@ -57,7 +57,9 @@ export async function callGroq(
 
   if (!res.ok) throw new Error('Groq API error: ' + (await res.text()));
 
-  const json = await res.json();
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
   const text = json.choices?.[0]?.message?.content ?? '';
   const clean = text.replace(/```json|```/g, '').trim();
   const result = JSON.parse(clean) as AIResponse;

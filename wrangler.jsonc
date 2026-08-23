@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "financebot",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true }
+
+  // No `vars` block by design. Every configuration value — including the
+  // non-secret ones like GATEWAY and LOG_LEVEL — is set with
+  // `wrangler secret put`, so no real value is ever written to a tracked file.
+  //
+  // Secrets are preserved across `wrangler deploy`; a `vars` block is not —
+  // whatever it contains is pushed on every deploy, so a blank entry here
+  // would overwrite a good value with an empty one.
+  //
+  // See `.env.example` for the full list, and README.md for how to set them.
+}

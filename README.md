@@ -23,7 +23,7 @@ WhatsApp (User)
       ▼
  Bot Backend (This Repo)
  ┌──────────────────────────────────────────┐
- │  webhook.ts  →  router.ts               │
+ │  worker.ts   →  router.ts               │
  │       │                                 │
  │       ├─ /setup      → setup.ts         │
  │       ├─ /dashboard  → sends URL        │
@@ -60,12 +60,13 @@ WhatsApp (User)
 
 | Layer      | Tech                     | Notes                          |
 |------------|--------------------------|--------------------------------|
-| Runtime    | Node.js 20 + TypeScript  | Compiled to `dist/`            |
-| Web server | Express 5                | Webhook receiver               |
+| Runtime    | Cloudflare Workers       | `src/worker.ts` (Hono)         |
+| Web server | Hono                     | Webhook receiver                |
 | AI         | Gemini 2.5 Flash Lite    | Transaction classification     |
 | WhatsApp   | Fonnte or Meta Cloud API | Switchable via `GATEWAY` env   |
 | Database   | Supabase (PostgreSQL)    | Service role key, bypasses RLS |
-| Dev tools  | nodemon + ts-node        | Hot reload in dev              |
+| Dev tools  | Wrangler                 | Local dev via `wrangler dev`   |
+| Testing    | Vitest 3                 | Mocked Supabase/Gemini/WA      |
 | Linting    | ESLint v9 + Prettier     | `eslint.config.js` (CommonJS)  |
 
 ---
@@ -74,8 +75,7 @@ WhatsApp (User)
 
 ```
 src/
-  index.ts                  # Express app, /health endpoint
-  webhook.ts                # Webhook verify + receive (200 first, deduplication)
+  worker.ts                 # Hono app: /health, GET+POST /webhook (verify, waitUntil dispatch)
   router.ts                 # Message routing, multi-transaction handling
   ai/
     gemini.ts               # Gemini API call + prompt
@@ -101,13 +101,26 @@ src/
   utils/
     lang.ts                 # Language detection
     format.ts               # formatIDR, formatDate
+    logger.ts               # PII-safe structured logger (LOG_LEVEL aware)
+    webhookAuth.ts          # Meta HMAC + Fonnte token verification
+
+tests/
+  router.test.ts            # Defensive-behavior tests for routeMessage
+  helpers/
+    mocks.ts                # Supabase Proxy + fixtures
+
+vitest.config.ts            # Test runner config
+tsconfig.test.json          # Test-only tsconfig (skipLibCheck)
 ```
 
 ---
 
 ## Environment Variables
 
-Create `.env` in the project root:
+Copy `.env.example` to `.env` and fill it in. Both `.env` and `.dev.vars` are
+git-ignored; no real value belongs in any tracked file, `wrangler.jsonc`
+included. The Worker reads `.dev.vars` locally and Wrangler secrets in
+production — see Deployment below.
 
 ```env
 # Supabase
@@ -123,17 +136,27 @@ FONNTE_TOKEN=your-fonnte-token
 # Meta Cloud API (if GATEWAY=meta)
 WA_PHONE_NUMBER_ID=1120944724425818   # Phone Number ID (NOT WABA ID)
 WA_ACCESS_TOKEN=EAAxx...              # System User permanent token
-WA_VERIFY_TOKEN=my-finance-bot-secret
-WA_APP_SECRET=xxxx
+WA_VERIFY_TOKEN=your-verify-token  # arbitrary, must match Meta webhook config
+WA_APP_SECRET=xxxx                    # REQUIRED — HMAC signs inbound POSTs
 
-# AI
-GEMINI_API_KEY=AIza...
-GEMINI_MODEL=gemini-2.5-flash-lite
+# Fonnte (if GATEWAY=fonnte)
+# Configure Fonnte to send a custom `X-Fonnte-Token` header with this value.
+# Bot rejects POSTs if unset while GATEWAY=fonnte.
+FONNTE_WEBHOOK_TOKEN=your-fonnte-webhook-token
+
+# AI provider — "groq" (default) or "gemini"
+AI_PROVIDER=groq
+AI_API_KEY=your-provider-api-key
+# Optional. Defaults per provider: groq=llama-3.3-70b-versatile, gemini=gemini-2.5-flash-lite
+AI_MODEL=
 
 # Dashboard URL (for /dashboard command and /summary footer)
 DASHBOARD_URL=https://your-app.vercel.app
 
-PORT=3001
+# Logging — optional. debug | info | warn | error.
+# Defaults: `info` in production, `debug` otherwise.
+# Production logs are PII-safe (phones masked, message text summarized).
+# LOG_LEVEL=info
 ```
 
 ---
@@ -148,19 +171,22 @@ npm install
 
 ### 2. Set up environment
 
+`wrangler dev` reads local secrets and vars from a `.dev.vars` file at the repo
+root (same `KEY=value` format as `.env`, not committed):
+
 ```bash
-cp .env.example .env
+cp .env .dev.vars
 # Fill in all values
 ```
 
 ### 3. Run locally
 
 ```bash
-# Start the bot
+# Start the Worker locally
 npm run dev
 
 # In another terminal — expose to internet for WhatsApp webhook
-npx ngrok http 3001
+npx ngrok http 8787
 ```
 
 ### 4. Configure webhook
@@ -187,39 +213,76 @@ makan 35k, kopi 15k, parkir 5k
 ## Scripts
 
 ```bash
-npm run dev        # Start with hot reload (nodemon + ts-node)
-npm run build      # Compile TypeScript to dist/
-npm run start      # Run compiled output (production)
-npm run lint       # ESLint check
-npm run lint:fix   # ESLint auto-fix
-npm run format     # Prettier format
+npm run dev             # Start the Worker locally (wrangler dev)
+npm run deploy          # Deploy to Cloudflare Workers (wrangler deploy)
+npm run build           # Type-check (tsc --noEmit)
+npm run lint            # ESLint check
+npm run lint:fix        # ESLint auto-fix
+npm run format          # Prettier format
+npm test                # Run Vitest suite once (no real API calls)
+npm run test:watch      # Vitest in watch mode
+npm run test:typecheck  # Type-check tests via tsconfig.test.json
 ```
+
+> **Note:** tests mock Supabase, the AI provider, and WhatsApp — no quota is burned. For true integration runs against a real provider, use a separate project/account and set `AI_API_KEY`.
 
 ---
 
 ## Deployment
 
-### Render (free, recommended)
+### Cloudflare Workers
 
-1. Push to GitHub
-2. New Web Service → connect repo
-3. Root Directory: `bot-backend` (if monorepo)
-4. Build command: `npm install --legacy-peer-deps && npm run build`
-5. Start command: `npm run start`
-6. Add all env vars in Render dashboard
-7. Add `.npmrc` with `legacy-peer-deps=true` to avoid peer dep errors
+The bot runs as a Cloudflare Worker (`src/worker.ts`, configured in
+`wrangler.jsonc`). No server to keep warm — Workers run on demand.
 
-**Keep warm:** Set up a cron job at [cron-job.org](https://cron-job.org) to ping `GET /health` every 5 minutes — Render free tier sleeps after 15 minutes of inactivity.
+1. `npx wrangler login` (once per machine)
+2. Set every configuration value as a secret. `wrangler.jsonc` deliberately has
+   no `vars` block, so no real value is ever written to a tracked file. Use
+   `.env.example` as the checklist of what is needed.
 
-> **Note:** Render free tier in Singapore may have intermittent disruptions. Check [status.render.com](https://status.render.com) if you experience persistent 521 errors.
+   The fastest way is a bulk upload from a local, git-ignored file — the same
+   `.dev.vars` used for local development works, since it is already in
+   `KEY=value` format:
 
-### Fly.io (free, no cold start)
+   ```bash
+   npx wrangler secret bulk .dev.vars
+   ```
 
-```bash
-fly launch          # choose region: sin (Singapore) or nrt (Tokyo)
-fly secrets set SUPABASE_URL=... GEMINI_API_KEY=... # set all env vars
-fly deploy
-```
+   `secret bulk` accepts a `KEY=VALUE` file directly (or JSON), up to 100 secrets
+   per command.
+
+   Or set them one at a time:
+
+   ```bash
+   npx wrangler secret put SUPABASE_URL
+   npx wrangler secret put SUPABASE_SERVICE_KEY
+   npx wrangler secret put WA_PHONE_NUMBER_ID
+   npx wrangler secret put WA_ACCESS_TOKEN
+   npx wrangler secret put WA_APP_SECRET
+   npx wrangler secret put WA_VERIFY_TOKEN
+   npx wrangler secret put AI_API_KEY
+   npx wrangler secret put GATEWAY
+   npx wrangler secret put AI_PROVIDER
+   npx wrangler secret put DASHBOARD_URL
+   ```
+
+   `AI_MODEL` and `LOG_LEVEL` are optional — the code falls back to a per-provider
+   default model and to `info` level. `FONNTE_TOKEN` and `FONNTE_WEBHOOK_TOKEN`
+   are only needed when `GATEWAY=fonnte`.
+
+   Secrets survive `wrangler deploy`; a `vars` block would not. Anything listed
+   under `vars` is re-pushed on every deploy, so a blank entry there would
+   overwrite a good value with an empty one. That is why there is no such block.
+
+   The trade-off: secrets are write-only, so you cannot read a value back from
+   the dashboard — only overwrite it. `.env.example` is the record of what
+   exists.
+
+3. `npm run deploy`
+4. Point the Meta (or Fonnte) webhook at `https://<worker>.<subdomain>.workers.dev/webhook`.
+
+For local development, `wrangler dev` reads the same variable names from a
+`.dev.vars` file at the repo root (git-ignored) instead of `wrangler secret`.
 
 ---
 
@@ -314,11 +377,18 @@ Name resolution priority:
 
 ## Key Implementation Notes
 
-**Webhook deduplication** — `res.sendStatus(200)` is called immediately before any processing so Meta never retries. Each message is also checked against `wa_user_message_id` to skip already-processed messages.
+**Webhook deduplication** — the POST handler ACKs `200` immediately (via `c.executionCtx.waitUntil`) before processing so Meta never retries. Each message is also checked against `wa_user_message_id` to skip already-processed messages.
 
 **Multi-transaction ordering** — transactions in a `CREATE_MULTIPLE` batch are inserted sequentially (not bulk) to guarantee distinct `created_at` timestamps. This ensures `.order('created_at')` always returns them in the original message order when looking up by `wa_bot_message_id`.
 
 **Gemini action fallback** — when replying to a multi-transaction message, the router accepts both `EDIT_FROM_MULTIPLE`/`DELETE_FROM_MULTIPLE` and `EDIT_TRANSACTION`/`DELETE_TRANSACTION` as valid actions since Gemini is inconsistent with action naming.
+
+**Webhook auth** — every inbound POST is verified before any processing:
+- `GATEWAY=meta` → `X-Hub-Signature-256` HMAC-SHA256 of the raw body, compared with `crypto.timingSafeEqual`.
+- `GATEWAY=fonnte` → `X-Fonnte-Token` header compared with `FONNTE_WEBHOOK_TOKEN`.
+The raw body is read via `c.req.text()` (never `c.req.json()`) before verification, so HMAC hashes the exact bytes Meta signed. Requests that fail verification get `401` with no further side effects.
+
+**PII-safe logging** — `src/utils/logger.ts` redacts phone numbers (keeps country code + last 2 digits), summarizes message text by length instead of content, and strips sensitive keys from error objects. `LOG_LEVEL` env var gates verbosity (`info` in production, `debug` otherwise).
 
 ---
 

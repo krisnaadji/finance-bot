@@ -1,7 +1,5 @@
 import crypto from 'crypto';
 
-import { Request } from 'express';
-
 /**
  * Verify the `X-Hub-Signature-256` header sent by Meta Cloud API.
  *
@@ -46,9 +44,13 @@ export function verifyMetaSignature(
  * here. If FONNTE_WEBHOOK_TOKEN is not set, verification is skipped (the
  * caller decides whether to fail closed or open in that case).
  */
-export function verifyFonnteToken(req: Request, expectedToken: string | undefined): boolean {
+export function verifyFonnteToken(
+  headers: Headers,
+  expectedToken: string | undefined,
+): boolean {
   if (!expectedToken) return false; // caller should fail closed when secret missing
-  const header = req.get('x-fonnte-token') ?? req.get('authorization') ?? '';
+  const header =
+    headers.get('x-fonnte-token') ?? headers.get('authorization') ?? '';
   // Strip optional "Bearer " prefix some integrations add.
   const received = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : header;
   if (!received || received.length !== expectedToken.length) return false;
