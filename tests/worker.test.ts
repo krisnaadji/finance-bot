@@ -8,6 +8,9 @@ import crypto from 'node:crypto';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const mocks = vi.hoisted(() => ({ routeMessage: vi.fn() }));
+vi.mock('../src/router', () => ({ routeMessage: mocks.routeMessage }));
+
 import app from '../src/worker';
 
 /**
@@ -28,6 +31,7 @@ function createCtx() {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  mocks.routeMessage.mockReset();
 });
 
 describe('GET /health', () => {
@@ -234,5 +238,142 @@ describe('POST /webhook — fonnte auth', () => {
     const res = await app.request('/webhook', postFonnte('anything'), {}, ctx);
 
     expect(res.status).toBe(500);
+  });
+});
+
+describe('POST /webhook — dispatch', () => {
+  it('routes a verified meta message after ACK', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    const { ctx, settled } = createCtx();
+
+    const res = await app.request(
+      '/webhook',
+      postMeta(META_BODY, sign(META_BODY, APP_SECRET)),
+      {},
+      ctx,
+    );
+    expect(res.status).toBe(200);
+
+    // Work is scheduled, not awaited inline — the ACK must not wait on it.
+    await settled();
+
+    expect(mocks.routeMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.routeMessage).toHaveBeenCalledWith({
+      messageId: 'wamid.TEST1',
+      chatId: '628123456789',
+      text: 'makan siang 35k',
+      repliedToId: null,
+      rawFrom: '628123456789',
+    });
+  });
+
+  it('does not route a forged message', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    const { ctx, settled } = createCtx();
+
+    await app.request(
+      '/webhook',
+      postMeta(META_BODY, sign(META_BODY, 'attacker-secret')),
+      {},
+      ctx,
+    );
+    await settled();
+
+    expect(mocks.routeMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-text messages without routing', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    const imageBody = JSON.stringify({
+      entry: [
+        { changes: [{ value: { messages: [{ id: 'w1', from: '6281', type: 'image' }] } }] },
+      ],
+    });
+    const { ctx, settled } = createCtx();
+
+    const res = await app.request(
+      '/webhook',
+      postMeta(imageBody, sign(imageBody, APP_SECRET)),
+      {},
+      ctx,
+    );
+    await settled();
+
+    expect(res.status).toBe(200);
+    expect(mocks.routeMessage).not.toHaveBeenCalled();
+  });
+
+  it('ACKs a verified but malformed body instead of erroring', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    const junk = 'not json at all';
+    const { ctx, settled } = createCtx();
+
+    const res = await app.request(
+      '/webhook',
+      postMeta(junk, sign(junk, APP_SECRET)),
+      {},
+      ctx,
+    );
+    await settled();
+
+    // A 500 here would make Meta retry the same broken payload indefinitely.
+    expect(res.status).toBe(200);
+    expect(mocks.routeMessage).not.toHaveBeenCalled();
+  });
+
+  it('still ACKs 200 when downstream processing throws', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    mocks.routeMessage.mockRejectedValueOnce(new Error('supabase down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ctx, settled } = createCtx();
+
+    const res = await app.request(
+      '/webhook',
+      postMeta(META_BODY, sign(META_BODY, APP_SECRET)),
+      {},
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    // Must not reject: an unhandled rejection inside waitUntil is invisible.
+    await expect(settled()).resolves.toBeDefined();
+  });
+
+  it('routes a verified fonnte message', async () => {
+    vi.stubEnv('GATEWAY', 'fonnte');
+    vi.stubEnv('FONNTE_WEBHOOK_TOKEN', 'fonnte-secret');
+    const { ctx, settled } = createCtx();
+
+    await app.request(
+      '/webhook',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-fonnte-token': 'fonnte-secret',
+        },
+        body: JSON.stringify({
+          id: 'f-1',
+          sender: '628123456789',
+          message: 'makan siang 35k',
+        }),
+      },
+      {},
+      ctx,
+    );
+    await settled();
+
+    expect(mocks.routeMessage).toHaveBeenCalledWith({
+      messageId: 'f-1',
+      chatId: '628123456789',
+      text: 'makan siang 35k',
+      repliedToId: null,
+      rawFrom: '628123456789',
+    });
   });
 });

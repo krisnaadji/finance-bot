@@ -1,9 +1,56 @@
 import { Hono } from 'hono';
 
-import { logger } from './utils/logger';
+import { IncomingMessage } from './ai/types';
+import { routeMessage } from './router';
+import { logger, safeSummarizeMsg } from './utils/logger';
 import { verifyFonnteToken, verifyMetaSignature } from './utils/webhookAuth';
 
 const app = new Hono();
+
+// ── Fonnte webhook handler ───────────────────────────────────────────
+async function handleFonnteWebhook(body: any) {
+  // Fonnte payload: { sender, message, chat_id, id, quoted_id, ... }
+  if (!body.message || !body.sender) return;
+
+  // Determine chatId: group messages have chat_id different from sender
+  const isGroup = body.chat_id && body.chat_id !== body.sender;
+  const chatId = isGroup ? body.chat_id : body.sender;
+
+  const msg: IncomingMessage = {
+    messageId: body.id ?? Date.now().toString(),
+    chatId,
+    text: body.message,
+    repliedToId: body.quoted_id ?? null,
+    rawFrom: body.sender,
+  };
+
+  logger.debug('webhook', 'fonnte_received', safeSummarizeMsg(msg));
+  await routeMessage(msg);
+}
+
+// ── Meta webhook handler ─────────────────────────────────────────────
+async function handleMetaWebhook(body: any) {
+  const entry = body?.entry?.[0];
+  const changes = entry?.changes?.[0];
+  const value = changes?.value;
+  const waMsg = value?.messages?.[0];
+
+  if (!waMsg || waMsg.type !== 'text') return;
+
+  const isGroup = value?.metadata?.message_type === 'group' || !!waMsg.group_id;
+  const chatId = isGroup ? (waMsg.group_id ?? waMsg.from) : waMsg.from;
+
+  const msg: IncomingMessage = {
+    messageId: waMsg.id,
+    chatId,
+    text: waMsg.text.body,
+    repliedToId: waMsg.context?.id ?? null,
+    rawFrom: waMsg.from,
+  };
+
+  logger.debug('webhook', 'meta_received', safeSummarizeMsg(msg));
+  await routeMessage(msg);
+}
 
 app.get('/health', (c) => c.json({ ok: true, ts: new Date().toISOString() }));
 
@@ -52,6 +99,29 @@ app.post('/webhook', async (c) => {
       return c.text('Unauthorized', 401);
     }
   }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    // The signature checked out, so this really came from the gateway. A 500
+    // here would make Meta retry the same broken payload indefinitely.
+    logger.warn('webhook', 'invalid_json_body');
+    return c.body(null, 200);
+  }
+
+  // Signature valid: ACK now, process after the response is sent. On Workers
+  // the isolate can be torn down as soon as the response returns, which would
+  // kill the AI call mid-flight — waitUntil keeps it alive until settled.
+  // The .catch is load-bearing: an unhandled rejection here is invisible.
+  c.executionCtx.waitUntil(
+    (gateway === 'fonnte'
+      ? handleFonnteWebhook(body)
+      : handleMetaWebhook(body)
+    ).catch((err) =>
+      logger.error('webhook', 'processing_error', err, { gateway }),
+    ),
+  );
 
   return c.body(null, 200);
 });
