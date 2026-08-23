@@ -40,8 +40,13 @@ describe('supabase client', () => {
 
 describe('logger level', () => {
   it('resolves LOG_LEVEL at call time, not import time', async () => {
-    vi.stubEnv('LOG_LEVEL', 'error');
+    // Import with no LOG_LEVEL set: eager resolution would freeze 'debug' here.
+    vi.stubEnv('LOG_LEVEL', '');
     const { logger } = await import('../src/utils/logger');
+
+    // Only now does the level become 'error'. Lazy resolution picks this up on
+    // the first log call; the old module-scope constant could not.
+    vi.stubEnv('LOG_LEVEL', 'error');
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
