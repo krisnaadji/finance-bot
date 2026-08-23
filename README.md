@@ -117,9 +117,10 @@ tsconfig.test.json          # Test-only tsconfig (skipLibCheck)
 
 ## Environment Variables
 
-Create `.env` in the project root (used only for local scripts/reference — the
-Worker itself reads from `.dev.vars` locally and from Wrangler secrets/vars in
-production, see below):
+Copy `.env.example` to `.env` and fill it in. Both `.env` and `.dev.vars` are
+git-ignored; no real value belongs in any tracked file, `wrangler.jsonc`
+included. The Worker reads `.dev.vars` locally and Wrangler secrets in
+production — see Deployment below.
 
 ```env
 # Supabase
@@ -235,20 +236,47 @@ The bot runs as a Cloudflare Worker (`src/worker.ts`, configured in
 `wrangler.jsonc`). No server to keep warm — Workers run on demand.
 
 1. `npx wrangler login` (once per machine)
-2. Set the required secrets (not committed anywhere, stored encrypted by Cloudflare):
+2. Set every configuration value as a secret. `wrangler.jsonc` deliberately has
+   no `vars` block, so no real value is ever written to a tracked file. Use
+   `.env.example` as the checklist of what is needed.
+
+   The fastest way is a bulk upload from a local, git-ignored file — the same
+   `.dev.vars` used for local development works, since it is already in
+   `KEY=value` format:
+
+   ```bash
+   npx wrangler secret bulk .dev.vars
+   ```
+
+   `secret bulk` accepts a `KEY=VALUE` file directly (or JSON), up to 100 secrets
+   per command.
+
+   Or set them one at a time:
 
    ```bash
    npx wrangler secret put SUPABASE_URL
    npx wrangler secret put SUPABASE_SERVICE_KEY
+   npx wrangler secret put WA_PHONE_NUMBER_ID
    npx wrangler secret put WA_ACCESS_TOKEN
    npx wrangler secret put WA_APP_SECRET
    npx wrangler secret put WA_VERIFY_TOKEN
    npx wrangler secret put AI_API_KEY
+   npx wrangler secret put GATEWAY
+   npx wrangler secret put AI_PROVIDER
+   npx wrangler secret put DASHBOARD_URL
    ```
 
-   `FONNTE_TOKEN` and `FONNTE_WEBHOOK_TOKEN` only if the Fonnte gateway is used.
-   Non-secret values (`GATEWAY`, `AI_PROVIDER`, `AI_MODEL`, `WA_PHONE_NUMBER_ID`,
-   `DASHBOARD_URL`, `LOG_LEVEL`, `NODE_ENV`) live in `wrangler.jsonc` under `vars`.
+   `AI_MODEL` and `LOG_LEVEL` are optional — the code falls back to a per-provider
+   default model and to `info` level. `FONNTE_TOKEN` and `FONNTE_WEBHOOK_TOKEN`
+   are only needed when `GATEWAY=fonnte`.
+
+   Secrets survive `wrangler deploy`; a `vars` block would not. Anything listed
+   under `vars` is re-pushed on every deploy, so a blank entry there would
+   overwrite a good value with an empty one. That is why there is no such block.
+
+   The trade-off: secrets are write-only, so you cannot read a value back from
+   the dashboard — only overwrite it. `.env.example` is the record of what
+   exists.
 
 3. `npm run deploy`
 4. Point the Meta (or Fonnte) webhook at `https://<worker>.<subdomain>.workers.dev/webhook`.
