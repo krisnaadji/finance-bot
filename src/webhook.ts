@@ -31,7 +31,8 @@ webhookRouter.post('/', async (req: Request, res: Response) => {
       logger.error('webhook', 'misconfigured_no_fonnte_token');
       return res.status(500).send('Server misconfigured');
     }
-    if (!verifyFonnteToken(req, expected)) {
+    // Temporary adapter: convert Express request to Headers for verification (removed in Cloudflare Worker migration)
+    if (!verifyFonnteToken(new Headers(req.headers as Record<string, string>), expected)) {
       logger.warn('webhook', 'fonnte_token_mismatch');
       return res.status(401).send('Unauthorized');
     }
