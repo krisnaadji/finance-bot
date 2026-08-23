@@ -123,7 +123,7 @@ FONNTE_TOKEN=your-fonnte-token
 # Meta Cloud API (if GATEWAY=meta)
 WA_PHONE_NUMBER_ID=1120944724425818   # Phone Number ID (NOT WABA ID)
 WA_ACCESS_TOKEN=EAAxx...              # System User permanent token
-WA_VERIFY_TOKEN=my-finance-bot-secret
+WA_VERIFY_TOKEN=your-verify-token
 WA_APP_SECRET=xxxx
 
 # AI

@@ -4,7 +4,7 @@
  * Goals:
  *   - Never write raw phone numbers, message text, or full request bodies.
  *   - Keep logs structured enough to be useful for debugging (ids, lengths,
- *     redacted tails) without leaking user data to Render logs.
+ *     redacted tails) without leaking user data to Worker logs.
  *   - Respect LOG_LEVEL so noisy `debug` calls disappear in production.
  *
  * Levels (ascending): debug < info < warn < error.
@@ -28,7 +28,14 @@ function resolveLevel(): Level {
   return process.env.NODE_ENV === 'production' ? 'info' : 'debug';
 }
 
-const activeLevel = LEVELS[resolveLevel()];
+let cachedLevel: number | null = null;
+
+// Resolved on first log call rather than at import: on Workers, process.env
+// is not populated at module-eval time.
+function activeLevel(): number {
+  if (cachedLevel === null) cachedLevel = LEVELS[resolveLevel()];
+  return cachedLevel;
+}
 
 // ── Redaction helpers ────────────────────────────────────────────────
 
@@ -89,7 +96,7 @@ function scrubError(err: unknown): Record<string, unknown> {
 // ── Core log function ────────────────────────────────────────────────
 
 function log(level: Level, scope: string, event: string, data?: unknown): void {
-  if (LEVELS[level] < activeLevel) return;
+  if (LEVELS[level] < activeLevel()) return;
 
   const payload: Record<string, unknown> = {
     t: new Date().toISOString(),
@@ -102,7 +109,7 @@ function log(level: Level, scope: string, event: string, data?: unknown): void {
     payload.data = data instanceof Error ? scrubError(data) : data;
   }
 
-  // Route warn/error to stderr; info/debug to stdout. Render surfaces both.
+  // Route warn/error to stderr; info/debug to stdout. wrangler tail surfaces both.
   const line = JSON.stringify(payload);
   if (level === 'error' || level === 'warn') {
     console.error(line);
