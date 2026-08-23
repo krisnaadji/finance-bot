@@ -72,4 +72,20 @@ describe('GET /webhook', () => {
     expect(res.status).toBe(200);
     expect(await res.text()).not.toBe('1158201444');
   });
+
+  it('does not echo the challenge when WA_VERIFY_TOKEN is unset', async () => {
+    // Deliberately no vi.stubEnv here. With both the env var and the query
+    // parameter absent, a bare === comparison comes out true.
+    const { ctx } = createCtx();
+
+    const res = await app.request(
+      '/webhook?hub.mode=subscribe&hub.challenge=attacker-payload',
+      {},
+      {},
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toBe('attacker-payload');
+  });
 });

@@ -11,7 +11,10 @@ app.get('/webhook', (c) => {
   const token = c.req.query('hub.verify_token');
   const challenge = c.req.query('hub.challenge');
 
-  if (mode === 'subscribe' && token === process.env.WA_VERIFY_TOKEN) {
+  // `token &&` is load-bearing: without it, an unset WA_VERIFY_TOKEN and an
+  // absent hub.verify_token compare undefined === undefined and the route
+  // would echo an attacker-supplied challenge.
+  if (mode === 'subscribe' && token && token === process.env.WA_VERIFY_TOKEN) {
     return c.text(challenge ?? '');
   }
   return c.body(null, 200);
