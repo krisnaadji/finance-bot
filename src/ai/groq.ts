@@ -11,7 +11,7 @@ export async function callGroq(
   multiContext?: string,
 ): Promise<AIResponse> {
   const apiKey = process.env.AI_API_KEY;
-  const model = process.env.AI_MODEL || 'llama-3.3-70b-versatile';
+  const model = process.env.AI_MODEL || 'openai/gpt-oss-120b';
   if (!apiKey) throw new Error('AI_API_KEY not set');
 
   const { data: cats } = await supabase

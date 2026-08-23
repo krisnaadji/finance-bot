@@ -147,7 +147,7 @@ FONNTE_WEBHOOK_TOKEN=your-fonnte-webhook-token
 # AI provider — "groq" (default) or "gemini"
 AI_PROVIDER=groq
 AI_API_KEY=your-provider-api-key
-# Optional. Defaults per provider: groq=llama-3.3-70b-versatile, gemini=gemini-2.5-flash-lite
+# Optional. Defaults per provider: groq=openai/gpt-oss-120b, gemini=gemini-2.5-flash-lite
 AI_MODEL=
 
 # Dashboard URL (for /dashboard command and /summary footer)
