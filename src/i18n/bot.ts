@@ -44,7 +44,7 @@ export const t: Record<Lang, BotStrings> = {
     resourceMissing: 'Data tidak ditemukan. Tidak ada perubahan yang dikonfirmasi.',
     conflict: 'Permintaan bertentangan dengan data yang sudah ada.',
     inactiveAccount: 'Akun tidak aktif atau tidak lagi terhubung ke chat ini.',
-    confirmationUnsupported: 'Minta hapus lagi lalu balas ya/tidak ke pesan konfirmasi itu dengan pengirim yang sama. Tanpa ID balasan, penghapusan tidak didukung.',
+    confirmationUnsupported: 'Tidak ada konfirmasi penghapusan yang dapat diproses untuk Anda di chat ini. Minta hapus lagi.',
     confirmationExpired: 'Konfirmasi sudah kedaluwarsa. Minta hapus lagi.',
     confirmationHandled: 'Konfirmasi sudah ditangani atau tidak berlaku. Tidak ada penghapusan baru.',
     uncategorized: 'Tanpa kategori',
@@ -79,7 +79,7 @@ export const t: Record<Lang, BotStrings> = {
       '\n📅 ' +
       date +
       '\n\n' +
-      'Balas *ya* atau *tidak* ke pesan ini dari nomor yang meminta penghapusan.\n_(Hangus dalam 60 detik)_',
+      'Kirim *ya* atau *tidak* di chat ini dari nomor yang meminta penghapusan. Tidak perlu membalas langsung pesan ini.\n_(Hangus dalam 60 detik)_',
     notSetup: (url: string) =>
       'Halo! Bot belum dikonfigurasi untuk chat ini.\n' +
       'Buka dashboard untuk membuat akun dan dapatkan kode setup:\n' +
@@ -130,7 +130,7 @@ export const t: Record<Lang, BotStrings> = {
     resourceMissing: 'Record not found. No change has been confirmed.',
     conflict: 'This request conflicts with existing data.',
     inactiveAccount: 'Account inactive or no longer linked to this chat.',
-    confirmationUnsupported: 'Request deletion again, then reply yes/no to that confirmation from the same sender. Deletion is unsupported without a reply ID.',
+    confirmationUnsupported: 'No deletion confirmation can be processed for you in this chat. Request deletion again.',
     confirmationExpired: 'Confirmation expired. Request deletion again.',
     confirmationHandled: 'Confirmation already handled or no longer valid. No new deletion occurred.',
     uncategorized: 'Uncategorized',
@@ -165,7 +165,7 @@ export const t: Record<Lang, BotStrings> = {
       '\n📅 ' +
       date +
       '\n\n' +
-      'Reply *yes* or *no* to this message from the sender who requested deletion.\n_(Expires in 60 seconds)_',
+      'Send *yes* or *no* in this chat from the sender who requested deletion. Quoting this message is optional.\n_(Expires in 60 seconds)_',
     notSetup: (url: string) =>
       'Hi! This bot is not configured for this chat.\n' +
       'Open the dashboard to create an account and get a setup code:\n' +

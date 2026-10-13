@@ -49,18 +49,26 @@ async function getMemberLangPref(accountId: string, waPhone: string): Promise<st
   return typeof result.data?.language_pref === 'string' ? result.data.language_pref : null;
 }
 
-async function getPendingForReply(accountId: string, chatId: string, confirmationMessageId: string): Promise<PendingAction | null> {
-  const result = await supabase.from('pending_actions').select('*').eq('account_id', accountId)
-    .eq('wa_chat_id', chatId).eq('confirmation_message_id', confirmationMessageId).maybeSingle();
+async function getPendingForReply(accountId: string, chatId: string, confirmationMessageId: string | null, requesterPhone?: string): Promise<PendingAction | null> {
+  let query = supabase.from('pending_actions').select('*').eq('account_id', accountId).eq('wa_chat_id', chatId);
+  if (requesterPhone !== undefined) query = query.eq('requested_by_phone', requesterPhone);
+  if (confirmationMessageId !== null) query = query.eq('confirmation_message_id', confirmationMessageId);
+  else if (requesterPhone !== undefined) query = query.eq('action', 'DELETE');
+  else return null;
+  const result = await query.maybeSingle();
   if (result.error) throw new BotWriteError('dependency');
   if (!result.data) return null;
   const value: unknown = result.data;
+  if (isRecord(value) && value.confirmation_message_id === null) return null;
   if (!isRecord(value) || !isUuid(value.id) || !isUuid(value.transaction_id) || value.account_id !== accountId ||
-      value.wa_chat_id !== chatId || value.confirmation_message_id !== confirmationMessageId || value.action !== 'DELETE' ||
+      value.wa_chat_id !== chatId || value.action !== 'DELETE' ||
+      typeof value.confirmation_message_id !== 'string' || !value.confirmation_message_id ||
+      (confirmationMessageId !== null && value.confirmation_message_id !== confirmationMessageId) ||
+      (requesterPhone !== undefined && value.requested_by_phone !== requesterPhone) ||
       typeof value.requested_by_phone !== 'string' || typeof value.expires_at !== 'string') throw new BotWriteError('dependency');
   return { id: value.id, transaction_id: value.transaction_id, account_id: accountId, action: 'DELETE',
     wa_chat_id: chatId, requested_by_phone: value.requested_by_phone,
-    expires_at: value.expires_at, confirmation_message_id: confirmationMessageId };
+    expires_at: value.expires_at, confirmation_message_id: value.confirmation_message_id };
 }
 
 async function findTxnByReply(messageId: string, accountId: string): Promise<TxnForBot | null> {
@@ -106,9 +114,9 @@ async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => 
 
   // Reserve all yes/no messages for explicit confirmation, never AI financial classification.
   if (isYesNo(text)) {
-    if (process.env.DELETE_CONFIRMATIONS_ENABLED !== 'true' || !msg.repliedToId)
+    if (process.env.DELETE_CONFIRMATIONS_ENABLED !== 'true')
       return sendWA(msg.chatId, t[lang].confirmationUnsupported);
-    const pending = await getPendingForReply(account.id, msg.chatId, msg.repliedToId);
+    const pending = await getPendingForReply(account.id, msg.chatId, msg.repliedToId, msg.rawFrom);
     if (!pending || pending.requested_by_phone !== msg.rawFrom)
       return sendWA(msg.chatId, t[lang].confirmationUnsupported);
     return confirmDelete(msg, pending, account, lang);

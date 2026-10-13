@@ -65,7 +65,7 @@ it.each(['upsert', 'update'] as const)('pending %s write failure never gives a u
   await expect(deleteTxn(txn, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(db.tables.pending_actions.every((row) => row.confirmation_message_id === null)).toBe(true);
 });
-it.each([{ rawFrom: 'requester-B' }, { chatId: 'other-chat' }, { repliedToId: 'unrelated' }, { repliedToId: null }])('wrong binding %j does not consume/delete', async (override) => {
+it.each([{ rawFrom: 'requester-B' }, { chatId: 'other-chat' }, { repliedToId: 'unrelated' }])('wrong binding %j does not consume/delete', async (override) => {
   await deleteTxn(txn, account, msg, 'en');
   await confirmDelete({ ...msg, text: 'yes', repliedToId: 'prompt-1', ...override }, pending(), account, 'en');
   expect(db.rpcCalls).toEqual([]); expect(db.tables.pending_actions).toHaveLength(1); expect(db.tables.transactions).toHaveLength(1);

@@ -46,13 +46,13 @@ export async function confirmDelete(msg: IncomingMessage, pending: PendingAction
     await sendWA(msg.chatId, t[lang].confirmationUnsupported); return;
   }
   if (!isUuid(pending.id) || pending.account_id !== account.id || pending.action !== 'DELETE' ||
-      !pending.confirmation_message_id || msg.repliedToId !== pending.confirmation_message_id ||
+      !pending.confirmation_message_id || (msg.repliedToId !== null && msg.repliedToId !== pending.confirmation_message_id) ||
       pending.requested_by_phone !== msg.rawFrom || pending.wa_chat_id !== msg.chatId || !isYesNo(msg.text)) {
     await sendWA(msg.chatId, t[lang].confirmationUnsupported); return;
   }
   const result = await supabase.rpc('consume_delete_confirmation', {
     p_pending_id: pending.id, p_account_id: account.id, p_chat_id: msg.chatId,
-    p_requester_phone: msg.rawFrom, p_confirmation_message_id: msg.repliedToId,
+    p_requester_phone: msg.rawFrom, p_confirmation_message_id: pending.confirmation_message_id,
     p_decision: isYes(msg.text) ? 'confirm' : 'cancel',
   });
   if (result.error) throw new BotWriteError('dependency');

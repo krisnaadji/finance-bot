@@ -27,7 +27,7 @@ it.each(['/summary','/search Lunch','/categories'])('read outage in %s is never 
   expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.dependencyUnavailable);
   expect(db.tables.transactions).toHaveLength(1); expect(state.ai).not.toHaveBeenCalled();
 });
-it.each([{ rawFrom: 'requester-B', repliedToId: 'prompt-1' }, { repliedToId: 'unrelated' }, { repliedToId: null }])('wrong/standalone yes %j never falls through to mutation', async (override) => {
+it.each([{ rawFrom: 'requester-B', repliedToId: 'prompt-1' }, { repliedToId: 'unrelated' }, { rawFrom: 'requester-B', repliedToId: null }])('wrong sender or unrelated confirmation %j cannot mutate', async (override) => {
   await deleteTxn(txn, account, base, 'en'); state.sendWA.mockClear();
   await routeMessage({ ...base, text: 'yes', ...override });
   expect(db.tables.transactions).toHaveLength(1); expect(db.tables.pending_actions).toHaveLength(1); expect(db.rpcCalls).toHaveLength(0);
@@ -38,6 +38,46 @@ it('bound yes deletes through RPC; bound no preserves target', async () => {
   expect(db.tables.transactions).toHaveLength(1); expect(db.tables.pending_actions).toHaveLength(0);
   await deleteTxn(txn, account, base, 'en'); await routeMessage({ ...base, text: 'yes', repliedToId: 'prompt-1' });
   expect(db.tables.transactions).toHaveLength(0); expect(db.rpcCalls).toHaveLength(2); expect(state.ai).not.toHaveBeenCalled();
+});
+it.each(['ya', 'yes'])('plain %s deletes only the requester target and cannot consume another sender on replay', async (answer) => {
+  const otherId = '30000000-0000-4000-8000-000000000002';
+  const other = { ...db.tables.transactions[0], id: otherId, description: 'Other transaction' };
+  db.tables.transactions.push(other);
+  state.sendWA.mockResolvedValueOnce('prompt-A').mockResolvedValueOnce('prompt-B');
+  await deleteTxn(txn, account, base, 'en');
+  await deleteTxn({ ...txn, id: otherId }, account, { ...base, rawFrom: 'requester-B' }, 'en');
+  await routeMessage({ ...base, text: answer, repliedToId: null });
+  expect(db.tables.transactions).toEqual([other]);
+  expect(db.tables.pending_actions.map(row => [row.transaction_id, row.requested_by_phone, row.confirmation_message_id]))
+    .toEqual([[otherId, 'requester-B', 'prompt-B']]);
+  await routeMessage({ ...base, text: answer, repliedToId: null });
+  expect(db.tables.transactions).toEqual([other]);
+  expect(db.tables.pending_actions.map(row => row.requested_by_phone)).toEqual(['requester-B']);
+  expect(state.ai).not.toHaveBeenCalled();
+});
+it.each(['tidak', 'no'])('plain %s cancels the requester deletion without changing its transaction', async (answer) => {
+  const original = db.tables.transactions.map(row => ({ ...row }));
+  await deleteTxn(txn, account, base, 'en');
+  await routeMessage({ ...base, text: answer, repliedToId: null });
+  expect(db.tables.transactions).toEqual(original);
+  expect(db.tables.pending_actions).toEqual([]);
+  expect(state.ai).not.toHaveBeenCalled();
+});
+it('plain ya cannot delete after the database confirmation lifetime', async () => {
+  await deleteTxn(txn, account, base, 'en');
+  db.clock = Date.now() + 120_000;
+  await routeMessage({ ...base, text: 'ya', repliedToId: null });
+  expect(db.tables.transactions.map(row => row.id)).toEqual([txnId]);
+  expect(db.tables.pending_actions).toEqual([]);
+});
+it('plain ya cannot consume a prompt whose delivery has no provider ID', async () => {
+  state.sendWA.mockResolvedValueOnce('');
+  await deleteTxn(txn, account, base, 'en');
+  await routeMessage({ ...base, text: 'ya', repliedToId: null });
+  expect(db.tables.transactions.map(row => row.id)).toEqual([txnId]);
+  expect(db.tables.pending_actions.map(row => row.confirmation_message_id)).toEqual([null]);
+  expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.confirmationUnsupported);
+  expect(state.ai).not.toHaveBeenCalled();
 });
 it('non-decision reply to confirmation cannot be classified as a create', async () => {
   await deleteTxn(txn, account, base, 'en'); await routeMessage({ ...base, text: 'instead add 999', repliedToId: 'prompt-1' });

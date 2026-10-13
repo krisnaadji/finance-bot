@@ -13,7 +13,7 @@ Bot replies: "💸 Tercatat! Makan Siang · -Rp35.000 · Kebutuhan Pokok · 📅
 
 The Worker verifies the webhook before dispatching messages through `src/router.ts`. Commands handle setup, reporting, categories, and language preferences. Natural-language financial commands pass through the configured AI adapter and shared runtime validation before any write.
 
-Delete confirmation uses `src/handlers/deleteTxn.ts` and a database RPC. Each prompt is bound to its account, chat, requester, request UUID, and delivered provider message ID. Plain yes/no messages cannot create financial transactions.
+Delete confirmation uses `src/handlers/deleteTxn.ts` and a database RPC. Each prompt is bound to its account, chat, requester, request UUID, and delivered provider message ID. After requesting deletion, send plain `ya/tidak` or `yes/no` in the same chat; quoting the confirmation is optional. Only the requester can confirm or cancel their pending deletion, within its 60-second database-checked lifetime. An explicitly quoted unrelated prompt is rejected. Plain yes/no messages never create financial transactions.
 
 > See [Database Schema](https://github.com/krisnaadji/finance-dashboard/blob/main/README-database.md) for full schema, table definitions, and ER diagram.
 
