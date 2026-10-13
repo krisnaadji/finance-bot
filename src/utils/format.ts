@@ -1,8 +1,11 @@
 import { Lang } from './lang';
 
 // Format number as Indonesian rupiah: 35000 → '35.000'
-export function formatIDR(amount: number): string {
-  return amount.toLocaleString('id-ID');
+export function formatIDR(amount: number | string): string {
+  if (typeof amount === 'number') return amount.toLocaleString('id-ID');
+  const [whole, fraction = '00'] = amount.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return grouped + (fraction === '00' ? '' : ',' + fraction);
 }
 
 // Format date for WA display based on language

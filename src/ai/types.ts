@@ -1,7 +1,7 @@
 export interface AIPayload {
-  amount?: number;
+  amount?: string;
   type?: 'income' | 'expense';
-  category?: string;
+  category?: string | null;
   description?: string;
   date?: string;
   selection_index?: number; // 1-based index for EDIT_FROM_MULTIPLE
@@ -9,7 +9,7 @@ export interface AIPayload {
   salary_month?: number;
   salary_year?: number;
   category_name?: string;
-  category_type?: string;
+  category_type?: 'income' | 'expense';
 }
 
 export interface AIResponse {
@@ -38,6 +38,7 @@ export interface Account {
   wa_chat_id: string;
   language: string;
   owner_id: string;
+  is_active: boolean;
 }
 
 // Note: no groupId field — chatId is always the canonical identifier
@@ -62,6 +63,12 @@ export interface PendingAction {
   id: string;
   account_id: string;
   transaction_id: string;
-  action: string;
+  action: 'DELETE';
   expires_at: string;
+  requested_by_phone: string | null;
+  wa_chat_id: string | null;
+  confirmation_message_id: string | null;
 }
+
+export type DeleteConfirmationOutcome =
+  | 'deleted' | 'cancelled' | 'expired' | 'already_consumed' | 'target_missing' | 'forbidden';

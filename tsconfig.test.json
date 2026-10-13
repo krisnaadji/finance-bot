@@ -4,6 +4,7 @@
     "rootDir": ".",
     "noEmit": true,
     "skipLibCheck": true,
+    "lib": ["ES2022", "ESNext.Promise"],
     "types": ["node", "@cloudflare/workers-types"]
   },
   "include": ["src/**/*", "tests/**/*", "vitest.config.ts"]

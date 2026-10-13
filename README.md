@@ -1,6 +1,6 @@
 # 🤖 Finance Bot — Backend
 
-WhatsApp bot that records personal finance transactions using natural language. Built with Node.js + TypeScript, powered by Gemini AI.
+WhatsApp bot that records transactions in personal or shared finance accounts using natural language. Built with TypeScript on Cloudflare Workers, with Groq and Gemini adapters.
 
 ```
 User sends: "makan siang 35k"
@@ -11,46 +11,9 @@ Bot replies: "💸 Tercatat! Makan Siang · -Rp35.000 · Kebutuhan Pokok · 📅
 
 ## Architecture
 
-```
-WhatsApp (User)
-      │
-      ▼
- Gateway Layer
- ┌────────────────────────────┐
- │  Fonnte  ──or──  Meta API  │
- └────────────────────────────┘
-      │  webhook POST /webhook
-      ▼
- Bot Backend (This Repo)
- ┌──────────────────────────────────────────┐
- │  worker.ts   →  router.ts               │
- │       │                                 │
- │       ├─ /setup      → setup.ts         │
- │       ├─ /dashboard  → sends URL        │
- │       ├─ /rekap      → getSummary.ts    │
- │       ├─ /kategori   → getCategories.ts │
- │       ├─ /language   → sets lang pref   │
- │       ├─ /help       → helpText         │
- │       ├─ pending?    → confirmDelete.ts │
- │       ├─ reply?      → editTxn/delete   │
- │       │    └─ multi? → EDIT/DELETE      │
- │       │               _FROM_MULTIPLE    │
- │       └─ new msg     → callGemini()     │
- │                            │            │
- │                       AI classifies     │
- │                            │            │
- │         ┌──────────────────┤            │
- │         ▼                  ▼            │
- │   createTxn           getSummary        │
- │   createMultiple      getCategories     │
- │   editTxn             addCategory       │
- │   deleteTxn           chitchat          │
- └──────────────────────────────────────────┘
-      │
-      ▼
- Supabase (PostgreSQL)
- accounts · transactions · categories · members · invite_tokens
-```
+The Worker verifies the webhook before dispatching messages through `src/router.ts`. Commands handle setup, reporting, categories, and language preferences. Natural-language financial commands pass through the configured AI adapter and shared runtime validation before any write.
+
+Delete confirmation uses `src/handlers/deleteTxn.ts` and a database RPC. Each prompt is bound to its account, chat, requester, request UUID, and delivered provider message ID. Plain yes/no messages cannot create financial transactions.
 
 > See [Database Schema](https://github.com/krisnaadji/finance-dashboard/blob/main/README-database.md) for full schema, table definitions, and ER diagram.
 
@@ -62,11 +25,11 @@ WhatsApp (User)
 |------------|--------------------------|--------------------------------|
 | Runtime    | Cloudflare Workers       | `src/worker.ts` (Hono)         |
 | Web server | Hono                     | Webhook receiver                |
-| AI         | Gemini 2.5 Flash Lite    | Transaction classification     |
+| AI         | Groq or Gemini          | Validated transaction classification |
 | WhatsApp   | Fonnte or Meta Cloud API | Switchable via `GATEWAY` env   |
 | Database   | Supabase (PostgreSQL)    | Service role key, bypasses RLS |
 | Dev tools  | Wrangler                 | Local dev via `wrangler dev`   |
-| Testing    | Vitest 3                 | Mocked Supabase/Gemini/WA      |
+| Testing    | Vitest 3                 | Isolated application tests and opt-in native PostgreSQL tests |
 | Linting    | ESLint v9 + Prettier     | `eslint.config.js` (CommonJS)  |
 
 ---
@@ -78,6 +41,9 @@ src/
   worker.ts                 # Hono app: /health, GET+POST /webhook (verify, waitUntil dispatch)
   router.ts                 # Message routing, multi-transaction handling
   ai/
+    index.ts                # Provider dispatch and command validation
+    groq.ts                 # Groq adapter
+    validation.ts           # Runtime financial command validation
     gemini.ts               # Gemini API call + prompt
     types.ts                # AIResponse, AIPayload types
     prompts.ts              # buildPrompt() function
@@ -85,8 +51,8 @@ src/
     createTxn.ts            # Record single transaction + attribution
     createMultiple.ts       # Record multiple transactions (sequential insert)
     editTxn.ts              # Edit via WhatsApp reply
-    deleteTxn.ts            # Delete with confirmation
-    confirmDelete.ts        # Handle yes/no confirmation
+    deleteTxn.ts            # Requester-bound prompt and RPC confirmation
+    transactionData.ts      # Scoped context, checked writes and receipts
     getSummary.ts           # Monthly summary + dashboard link
     getCategories.ts        # List categories
     addCategory.ts          # Add custom category
@@ -400,3 +366,25 @@ The raw body is read via `c.req.text()` (never `c.req.json()`) before verificati
 | Edit/delete account from bot  | ❌ Not built | Use dashboard Accounts page instead                 |
 | Edit/delete category from bot | ❌ Not built | Use dashboard Categories page instead               |
 | Receipt / bill photo parsing  | ❌ Not built | Planned — Gemini Vision can handle this             |
+
+## Financial input and offline checks
+
+Financial writes accept positive amounts up to `9999999999999.99`, with at most two nonzero decimal places. Storage input is a canonical decimal string. API/model values must use plain decimal notation without currency separators or exponents; malformed values are rejected instead of rounded or defaulted to zero.
+
+Business dates use real calendar days in `YYYY-MM-DD` format, from 2000 through 2100. Invalid dates such as `2026-02-30` are rejected.
+
+Run `npm test -- tests/financialValidation.test.ts` for money/date boundaries. Run `npm test`, `npm run build`, `npm run test:typecheck`, and `npm run lint` for integration checks. These commands do not authorize production database changes or deployment.
+
+## Phase 1 security rollout
+
+Dashboard and bot financial edits write only supplied fields and require the original financial snapshot to still match. A concurrent edit produces a conflict instead of overwriting another user's correction.
+
+Numeric JSON amounts retain their original token through `JSON.parse` reviver source context before decimal validation. The runtime must support that feature; it was exercised on Node 24.14.1 and the local Worker engine. Unsupported numeric decoding fails closed. Decimal-string inputs do not require source context.
+
+Keep `DELETE_CONFIRMATIONS_ENABLED=false` until the catalog inspection, both migrations in `supabase/migrations`, and the disposable Supabase/Auth/PostgREST plus actual gateway confirmation checks have passed. Migration files are not authorization to apply them to production.
+
+`npm run test:db` uses a separately approved, initially empty disposable PostgreSQL database named with the `finance_phase1_test` prefix. Native PostgreSQL tests cover RPC authorization, atomic consumption, concurrent confirmations, and expiry after lock waits. They do not prove Supabase RPC exposure or provider reply IDs.
+
+Batch writes and account/invitation flows still contain multiple database operations. Phase 2 covers their durability. Bilingual categories, salary identity, and image parsing remain later phases.
+
+`/language` looks up the member by account and WhatsApp sender, then updates the existing row or inserts a new preference. Production has no unique constraint on that pair, so the command cannot use a composite-key upsert. Updating the preference preserves the member ID, linked user, role, and display name. Concurrent first-time membership creation remains part of Phase 2.

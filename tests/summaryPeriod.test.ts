@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
+type SalaryResult = { data: unknown[]; error: null };
+type SalaryBuilder = {
+  select: () => SalaryBuilder;
+  eq: () => SalaryBuilder;
+  gte: (column: string, value: string) => SalaryBuilder;
+  lte: (column: string, value: string) => SalaryBuilder;
+  order: (column: string, options: { ascending: boolean }) => SalaryBuilder;
+  limit: (value: number) => Promise<SalaryResult>;
+  then: (onFulfilled?: (value: SalaryResult) => unknown) => Promise<unknown>;
+};
+
 const rows = vi.hoisted(() => ({
   salaryRows: [] as unknown[],
 }));
@@ -31,7 +42,7 @@ vi.mock('../src/services/supabase', () => ({
         return { data, error: null };
       };
 
-      const builder = {
+      const builder: SalaryBuilder = {
         select: vi.fn(() => builder),
         eq: vi.fn(() => builder),
         gte: vi.fn((_column: string, value: string) => {

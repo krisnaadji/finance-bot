@@ -5,7 +5,10 @@ import { logger } from './utils/logger';
 import { resolveLang, SUPPORTED_LANGS, Lang } from './utils/lang';
 import { isYesNo } from './utils/format';
 import { t } from './i18n/bot';
-import { IncomingMessage } from './ai/types';
+import { IncomingMessage, AIResponse, Account, PendingAction, TxnForBot } from './ai/types';
+import { isRecord, isUuid } from './utils/financialValidation';
+import { validateAIResponse, InvalidAICommand } from './ai/validation';
+import { BotWriteError, BotDeliveryError, assertActiveLinkedAccount, canonicalTxn, transactionColumns } from './handlers/transactionData';
 import {
   helpShortcutHint,
   resolveHelpShortcut,
@@ -28,64 +31,66 @@ import {
 } from './handlers';
 
 // ── DB helpers ────────────────────────────────────────────────────
-async function getAccountByChatId(chatId: string) {
-  const { data } = await supabase
-    .from('accounts')
-    .select('*')
-    .eq('wa_chat_id', chatId)
-    .single();
-  return data;
+async function getAccountByChatId(chatId: string): Promise<Account | null> {
+  const result = await supabase.from('accounts').select('*').eq('wa_chat_id', chatId).eq('is_active', true).maybeSingle();
+  if (result.error) throw new BotWriteError('dependency');
+  if (!result.data) return null;
+  const row: unknown = result.data;
+  if (!isRecord(row) || !isUuid(row.id) || !isUuid(row.owner_id) || typeof row.name !== 'string' ||
+      (row.type !== 'personal' && row.type !== 'group') || typeof row.language !== 'string' ||
+      row.wa_chat_id !== chatId || row.is_active !== true) throw new BotWriteError('dependency');
+  return { id: row.id, owner_id: row.owner_id, name: row.name, type: row.type,
+    language: row.language, wa_chat_id: chatId, is_active: true };
 }
 
-async function getMemberLangPref(accountId: string, waPhone: string) {
-  const { data } = await supabase
-    .from('members')
-    .select('language_pref')
-    .eq('account_id', accountId)
-    .eq('wa_phone', waPhone)
-    .single();
-  return data?.language_pref ?? null;
+async function getMemberLangPref(accountId: string, waPhone: string): Promise<string | null> {
+  const result = await supabase.from('members').select('language_pref').eq('account_id', accountId).eq('wa_phone', waPhone).maybeSingle();
+  if (result.error) throw new BotWriteError('dependency');
+  return typeof result.data?.language_pref === 'string' ? result.data.language_pref : null;
 }
 
-async function getActivePending(accountId: string) {
-  const { data } = await supabase
-    .from('pending_actions')
-    .select('*')
-    .eq('account_id', accountId)
-    .gt('expires_at', new Date().toISOString())
-    .single();
-  return data;
+async function getPendingForReply(accountId: string, chatId: string, confirmationMessageId: string): Promise<PendingAction | null> {
+  const result = await supabase.from('pending_actions').select('*').eq('account_id', accountId)
+    .eq('wa_chat_id', chatId).eq('confirmation_message_id', confirmationMessageId).maybeSingle();
+  if (result.error) throw new BotWriteError('dependency');
+  if (!result.data) return null;
+  const value: unknown = result.data;
+  if (!isRecord(value) || !isUuid(value.id) || !isUuid(value.transaction_id) || value.account_id !== accountId ||
+      value.wa_chat_id !== chatId || value.confirmation_message_id !== confirmationMessageId || value.action !== 'DELETE' ||
+      typeof value.requested_by_phone !== 'string' || typeof value.expires_at !== 'string') throw new BotWriteError('dependency');
+  return { id: value.id, transaction_id: value.transaction_id, account_id: accountId, action: 'DELETE',
+    wa_chat_id: chatId, requested_by_phone: value.requested_by_phone,
+    expires_at: value.expires_at, confirmation_message_id: confirmationMessageId };
 }
 
-async function findTxnByReply(messageId: string, accountId: string) {
-  const { data } = await supabase
-    .from('transactions')
-    .select('id, description, amount, date, categories(name)')
-    .eq('account_id', accountId)
-    .or(
-      'wa_user_message_id.eq.' +
-        messageId +
-        ',wa_bot_message_id.eq.' +
-        messageId,
-    )
-    .single();
-  if (!data) return null;
-  return {
-    id: data.id as string,
-    description: data.description as string,
-    amount: data.amount as number,
-    date: data.date as string,
-    category_name: (data.categories as any)?.name ?? '',
-  };
+async function findTxnByReply(messageId: string, accountId: string): Promise<TxnForBot | null> {
+  for (const column of ['wa_bot_message_id', 'wa_user_message_id']) {
+    const result = await supabase.from('transactions').select(transactionColumns + ',categories(name)')
+      .eq('account_id', accountId).eq(column, messageId).maybeSingle();
+    if (result.error) throw new BotWriteError('dependency');
+    if (result.data) {
+      const raw: unknown = result.data;
+      const txn = canonicalTxn(raw, accountId);
+      const category = isRecord(raw) && isRecord(raw.categories) ? raw.categories : null;
+      return { id: txn.id, description: txn.description, amount: Number(txn.amount), date: txn.date,
+        category_name: typeof category?.name === 'string' ? category.name : '' };
+    }
+  }
+  return null;
+}
+
+async function checkedAI(...args: Parameters<typeof callAI>): Promise<AIResponse> {
+  return validateAIResponse(await callAI(...args));
 }
 
 // ── Main router ───────────────────────────────────────────────────
-export async function routeMessage(msg: IncomingMessage) {
+async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => void) {
   const text = msg.text.trim();
 
   // /setup is handled before account lookup — it's how accounts get linked
   if (text.startsWith('/setup')) {
     const parts = text.split(/\s+/);
+    if (SUPPORTED_LANGS.includes(parts[2] as Lang)) setLang(parts[2] as Lang);
     return setup(msg, parts[1] ?? '', parts[2]);
   }
 
@@ -94,8 +99,24 @@ export async function routeMessage(msg: IncomingMessage) {
   if (!account) return sendWA(msg.chatId, t['id'].notSetup(dashboardUrl));
 
   // Resolve language once — passed to all handlers
+  setLang(resolveLang(account.language, null));
   const memberPref = await getMemberLangPref(account.id, msg.rawFrom);
   const lang: Lang = resolveLang(account.language, memberPref);
+  setLang(lang);
+
+  // Reserve all yes/no messages for explicit confirmation, never AI financial classification.
+  if (isYesNo(text)) {
+    if (process.env.DELETE_CONFIRMATIONS_ENABLED !== 'true' || !msg.repliedToId)
+      return sendWA(msg.chatId, t[lang].confirmationUnsupported);
+    const pending = await getPendingForReply(account.id, msg.chatId, msg.repliedToId);
+    if (!pending || pending.requested_by_phone !== msg.rawFrom)
+      return sendWA(msg.chatId, t[lang].confirmationUnsupported);
+    return confirmDelete(msg, pending, account, lang);
+  }
+  if (msg.repliedToId) {
+    const pending = await getPendingForReply(account.id, msg.chatId, msg.repliedToId);
+    if (pending) return sendWA(msg.chatId, t[lang].confirmationUnsupported);
+  }
 
   // /help
   if (text === '/help') return sendHelp(msg, lang);
@@ -105,15 +126,21 @@ export async function routeMessage(msg: IncomingMessage) {
     const newLang = text.split(/\s+/)[1]?.toLowerCase();
     if (!SUPPORTED_LANGS.includes(newLang as Lang))
       return sendWA(msg.chatId, 'Supported: /language id   or   /language en');
-    await supabase.from('members').upsert(
-      {
-        account_id: account.id,
-        wa_phone: msg.rawFrom,
-        language_pref: newLang,
-      },
-      { onConflict: 'account_id,wa_phone' },
-    );
-    return sendWA(msg.chatId, t[newLang as Lang].langChanged(newLang));
+    await assertActiveLinkedAccount(account, msg);
+    const member = await supabase.from('members').select('id')
+      .eq('account_id', account.id).eq('wa_phone', msg.rawFrom).maybeSingle();
+    if (member.error) throw new BotWriteError('dependency');
+    if (member.data && !isUuid(member.data.id)) throw new BotWriteError('dependency');
+    const write = member.data
+      ? supabase.from('members').update({ language_pref: newLang })
+        .eq('id', member.data.id).eq('account_id', account.id).eq('wa_phone', msg.rawFrom)
+      : supabase.from('members').insert({ account_id: account.id, wa_phone: msg.rawFrom, language_pref: newLang });
+    const result = await write.select('account_id,wa_phone,language_pref').single();
+    if (result.error) throw new BotWriteError('dependency');
+    if (!result.data || result.data.account_id !== account.id || result.data.wa_phone !== msg.rawFrom || result.data.language_pref !== newLang)
+      throw new BotWriteError('missing');
+    try { return await sendWA(msg.chatId, t[newLang as Lang].langChanged(result.data.language_pref)); }
+    catch { throw new BotDeliveryError(); }
   }
 
   // /dashboard — send dashboard link
@@ -217,19 +244,17 @@ export async function routeMessage(msg: IncomingMessage) {
     return searchTxn(query, account, msg, lang);
   }
 
-  // Pending delete confirmation: check before AI to avoid unnecessary API call
-  const pending = await getActivePending(account.id);
-  if (pending && isYesNo(text)) return confirmDelete(msg, pending, lang);
-
   // Reply to a bot message — could be single or multi-transaction
   if (msg.repliedToId) {
     // Check if multiple transactions share this message ID
-    const { data: multiples } = await supabase
+    const { data: multiples, error: multipleError } = await supabase
       .from('transactions')
       .select('*, categories(name)')
       .eq('account_id', account.id)
       .eq('wa_bot_message_id', msg.repliedToId)
       .order('created_at');
+    if (multipleError || !Array.isArray(multiples)) throw new BotWriteError('dependency');
+    for (const row of multiples) canonicalTxn(row, account.id);
 
     logger.debug('router', 'reply_lookup', {
       messageId: msg.repliedToId,
@@ -244,7 +269,7 @@ export async function routeMessage(msg: IncomingMessage) {
             1 +
             '. ' +
             t.description +
-            ' — ' +
+            ' : ' +
             (t.type === 'income' ? '+' : '-') +
             'Rp' +
             t.amount +
@@ -254,8 +279,8 @@ export async function routeMessage(msg: IncomingMessage) {
         )
         .join('\n');
 
-      const ai = await callAI(text, account, lang, undefined, context);
-      const selIdx = (ai as any).selection_index ?? ai.payload?.selection_index;
+      const ai = await checkedAI(text, account, lang, undefined, context);
+      const selIdx = ai.selection_index ?? ai.payload.selection_index;
 
       // Handle edit — accept both EDIT_FROM_MULTIPLE and EDIT_TRANSACTION
       const isEdit =
@@ -274,26 +299,28 @@ export async function routeMessage(msg: IncomingMessage) {
         if (raw) {
           const txn = {
             ...raw,
-            category_name: (raw.categories as any)?.name ?? '—',
+            category_name: (raw.categories as { name?: string } | null)?.name ?? t[lang].uncategorized,
           };
           return deleteTxn(txn, account, msg, lang);
         }
       }
+      return sendWA(msg.chatId, t[lang].invalidCommand);
     }
 
     // Single transaction reply — existing flow
     const txn = await findTxnByReply(msg.repliedToId, account.id);
     if (txn) {
-      const ai = await callAI(text, account, lang, txn);
+      const ai = await checkedAI(text, account, lang, txn);
       if (ai.action === 'EDIT_TRANSACTION')
         return editTxn(ai, txn.id, account, msg, lang);
       if (ai.action === 'DELETE_TRANSACTION')
         return deleteTxn(txn, account, msg, lang);
+      return sendWA(msg.chatId, t[lang].invalidCommand);
     }
   }
 
   // New message — send to AI for classification
-  const ai = await callAI(text, account, lang);
+  const ai = await checkedAI(text, account, lang);
   switch (ai.action) {
     case 'CREATE_TRANSACTION':
       return createTxn(ai, account, msg, lang);
@@ -307,5 +334,20 @@ export async function routeMessage(msg: IncomingMessage) {
       return addCategory(ai, account, msg, lang);
     default:
       return chitchat(ai, account, msg, lang);
+  }
+}
+
+export async function routeMessage(msg: IncomingMessage) {
+  let lang: Lang = 'id';
+  try { return await routeMessageInner(msg, (resolved) => { lang = resolved; }); }
+  catch (error) {
+    if (error instanceof BotDeliveryError) throw error;
+    if (error instanceof InvalidAICommand) return sendWA(msg.chatId, t[lang].invalidCommand);
+    if (error instanceof BotWriteError) {
+      const message = error.kind === 'invalid' ? t[lang].invalidCommand : error.kind === 'missing' ? t[lang].resourceMissing :
+        error.kind === 'conflict' ? t[lang].conflict : error.kind === 'inactive' ? t[lang].inactiveAccount : t[lang].dependencyUnavailable;
+      return sendWA(msg.chatId, message);
+    }
+    throw error;
   }
 }

@@ -1,7 +1,8 @@
 import { supabase } from '../services/supabase';
 import { buildPrompt } from './prompts';
-import { Lang } from '../utils/lang';
-import { AIResponse, Account, TxnForBot } from './types';
+import type { Lang } from '../utils/lang';
+import type { Account, TxnForBot } from './types';
+import { parseFinancialJson } from '../utils/financialValidation';
 
 export async function callGemini(
   message: string,
@@ -9,17 +10,18 @@ export async function callGemini(
   lang: Lang,
   replyTxn?: TxnForBot,
   multiContext?: string,
-): Promise<AIResponse> {
+): Promise<unknown> {
   const apiKey = process.env.AI_API_KEY;
   const model = process.env.AI_MODEL || 'gemini-2.5-flash-lite';
   if (!apiKey) throw new Error('AI_API_KEY not set');
 
-  const { data: cats } = await supabase
+  const { data: cats, error: categoryError } = await supabase
     .from('categories')
     .select('name, type')
     .eq('account_id', account.id)
     .eq('is_active', true)
     .order('sort_order');
+  if (categoryError || !Array.isArray(cats)) throw new Error('AI category lookup unavailable');
 
   const categories = {
     income: (cats ?? []).filter((c) => c.type === 'income').map((c) => c.name),
@@ -62,5 +64,5 @@ export async function callGemini(
   };
   const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean) as AIResponse;
+  return parseFinancialJson(clean);
 }

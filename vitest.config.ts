@@ -6,6 +6,7 @@ export default defineConfig({
     // tsconfig's rootDir is `./src`, so putting tests outside keeps tsc build
     // output clean.
     include: ['tests/**/*.test.ts'],
+    exclude: ['tests/integration/**', '.worktrees/**', 'node_modules/**'],
     environment: 'node',
     // Don't burn the user's Gemini quota: no tests hit real APIs. All
     // external services (supabase, gemini, whatsapp) must be mocked.

@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:typecheck": "tsc -p tsconfig.test.json --noEmit"
+    "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test:db": "vitest run --config vitest.integration.config.ts"
   },
   "repository": {
     "type": "git",
@@ -29,11 +30,13 @@
     "@cloudflare/workers-types": "^5.20260823.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.0",
+    "@types/pg": "^8.23.1",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",
+    "pg": "^8.23.1",
     "prettier": "^3.8.1",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.58.0",

@@ -1,215 +1,56 @@
 import { supabase } from '../services/supabase';
 import { sendWA } from '../services/whatsapp';
-import { formatIDR, formatDate } from '../utils/format';
-import { AIResponse, Account, IncomingMessage } from '../ai/types';
-import { Lang } from '../utils/lang';
+import type { AIResponse, Account, IncomingMessage } from '../ai/types';
+import type { Lang } from '../utils/lang';
+import { validateAIResponse, InvalidAICommand } from '../ai/validation';
 import { t } from '../i18n/bot';
-
-export async function createMultiple(
-  ai: AIResponse,
-  account: Account,
-  msg: IncomingMessage,
-  lang: Lang,
-) {
-  const items = ai.transactions ?? [];
-  if (!items.length)
-    return sendWA(
-      msg.chatId,
-      lang === 'id' ? 'Tidak ada transaksi.' : 'No transactions found.',
-    );
-
-  // Resolve category names → IDs
-  const { data: cats } = await supabase
-    .from('categories')
-    .select('id, name')
-    .eq('account_id', account.id);
-  const catMap: Record<string, string> = {};
-  for (const c of cats ?? []) catMap[c.name] = c.id;
-
-  // Look up member name by phone for attribution
-  const { data: member } = await supabase
-    .from('members')
-    .select('display_name')
-    .eq('account_id', account.id)
-    .eq('wa_phone', msg.rawFrom)
-    .single();
-
-  // Insert all transactions sequentially
-  const rows = items.map((p) => ({
-    account_id: account.id,
-    amount: Number(p.amount ?? 0),
-    type: p.type ?? 'expense',
-    description: p.description ?? '',
-    date: p.date ?? new Date().toISOString().split('T')[0],
-    category_id: p.category ? (catMap[p.category] ?? null) : null,
-    raw_message: msg.text,
-    wa_user_message_id: msg.messageId,
-    recorded_by_name: member?.display_name ?? msg.rawFrom,
-    recorded_by_phone: msg.rawFrom,
-  }));
-
-  const inserted: any[] = [];
+import { formatIDR } from '../utils/format';
+import { BotDeliveryError, BotWriteError, budgetWarnings, canonicalTxn, deliverTransactionReceipt, loadWriteContext, resolveCategory, transactionColumns, transactionReceipt, type CanonicalTxn } from './transactionData';
+export async function createMultiple(ai: AIResponse, account: Account, msg: IncomingMessage, lang: Lang): Promise<void> {
+  const command = validateAIResponse(ai);
+  if (command.action !== 'CREATE_MULTIPLE' || !command.transactions) throw new InvalidAICommand();
+  const { categories, displayName } = await loadWriteContext(account, msg);
+  const rows = command.transactions.map((p) => ({ account_id: account.id,
+    category_id: resolveCategory(p.category, p.type!, categories)?.id ?? null, amount: p.amount!, type: p.type!,
+    description: p.description ?? '', date: p.date!, raw_message: msg.text, wa_user_message_id: msg.messageId,
+    recorded_by_name: displayName, recorded_by_phone: msg.rawFrom }));
+  const inserted: CanonicalTxn[] = [];
   for (const row of rows) {
-    const { data, error } = await supabase
-      .from('transactions')
-      .insert(row)
-      .select()
-      .single();
-
-    if (error || !data) {
-      if (inserted.length > 0) {
-        await supabase
-          .from('transactions')
-          .delete()
-          .in(
-            'id',
-            inserted.map((r) => r.id),
-          );
+    const result = await supabase.from('transactions').insert(row).select(transactionColumns).single();
+    if (result.error || !result.data) {
+      if (inserted.length) {
+        const ids = inserted.map((txn) => txn.id);
+        const undone = await supabase.from('transactions').delete().eq('account_id', account.id).in('id', ids).select('id');
+        if (undone.error || !Array.isArray(undone.data) || undone.data.length !== ids.length || !ids.every((id) => undone.data.some((txn) => txn.id === id))) {
+          // A failed compensation may have partially removed rows. Re-read only this request's known committed IDs.
+          const remaining = await supabase.from('transactions').select(transactionColumns).eq('account_id', account.id).in('id', ids);
+          if (remaining.error || !Array.isArray(remaining.data)) {
+            try { await sendWA(msg.chatId, t[lang].batchOutcomeUnknown); } catch { throw new BotDeliveryError(); }
+            return;
+          }
+          const persisted = remaining.data.map((txn) => canonicalTxn(txn, account.id));
+          if (persisted.length) {
+            await deliverTransactionReceipt(persisted, account, msg,
+              t[lang].batchPartial + '\n\n' + persisted.map((txn, i) => `${i + 1}. ${transactionReceipt(txn, categories, lang)}`).join('\n\n'));
+            return;
+          }
+        }
       }
-      await sendWA(
-        msg.chatId,
-        lang === 'id'
-          ? '❌ Gagal menyimpan transaksi.'
-          : '❌ Failed to save transactions.',
-      );
-      return;
+      throw new BotWriteError('dependency');
     }
-    inserted.push(data);
+    inserted.push(canonicalTxn(result.data, account.id));
   }
-
-  // Build reply lines
-  const lines = items.map((p, i) => {
-    const emoji = p.type === 'income' ? '💰' : '💸';
-    const typeStr =
-      p.type === 'income'
-        ? lang === 'id'
-          ? 'Pemasukan'
-          : 'Income'
-        : lang === 'id'
-          ? 'Pengeluaran'
-          : 'Expense';
-    const cat = p.category ?? (lang === 'id' ? 'Lainnya' : 'Other');
-    const amt =
-      (p.type === 'income' ? '+' : '-') +
-      'Rp' +
-      formatIDR(Number(p.amount ?? 0));
-    const date = formatDate(
-      p.date ?? new Date().toISOString().split('T')[0],
-      lang,
-    );
-    return (
-      i +
-      1 +
-      '. ' +
-      emoji +
-      ' ' +
-      (p.description ?? '') +
-      '\n' +
-      '   ' +
-      amt +
-      ' · ' +
-      cat +
-      ' · ' +
-      typeStr +
-      ' · ' +
-      date
-    );
-  });
-
-  const total = items.reduce(
-    (s, p) =>
-      s +
-      (p.type === 'expense' ? Number(p.amount ?? 0) : -Number(p.amount ?? 0)),
-    0,
-  );
-  const totalStr = (total >= 0 ? '-' : '+') + 'Rp' + formatIDR(Math.abs(total));
-
-  // Check budget warnings for all expense items
-  const now = new Date();
-  const fromDate = new Date(now.getFullYear(), now.getMonth(), 1)
-    .toISOString()
-    .split('T')[0];
-  const toDate = now.toISOString().split('T')[0];
-  const warnings: string[] = [];
-
-  // Get all budgets for this account at once
-  const { data: budgets } = await supabase
-    .from('budgets')
-    .select('category_id, amount')
-    .eq('account_id', account.id);
-
-  if (budgets?.length) {
-    // Get all category IDs that have budgets and appear in this batch
-    const budgetMap: Record<string, number> = {};
-    for (const b of budgets) budgetMap[b.category_id] = b.amount;
-
-    // Get affected category IDs from this batch
-    const expenseCatIds = items
-      .filter((p) => p.type === 'expense' && p.category && catMap[p.category])
-      .map((p) => catMap[p.category!])
-      .filter((id) => budgetMap[id]);
-
-    const uniqueCatIds = [...new Set(expenseCatIds)];
-
-    for (const catId of uniqueCatIds) {
-      const { data: spendRows } = await supabase
-        .from('transactions')
-        .select('amount')
-        .eq('account_id', account.id)
-        .eq('category_id', catId)
-        .eq('type', 'expense')
-        .gte('date', fromDate)
-        .lte('date', toDate);
-
-      const totalSpent = (spendRows ?? []).reduce(
-        (s, r) => s + Number(r.amount),
-        0,
-      );
-      const budgetLimit = budgetMap[catId];
-      const pct = Math.round((totalSpent / budgetLimit) * 100);
-      const catName =
-        Object.entries(catMap).find(([, id]) => id === catId)?.[0] ?? '';
-
-      if (totalSpent > budgetLimit) {
-        warnings.push(
-          lang === 'id'
-            ? `⚠️ *Budget ${catName} terlampaui!* Rp${formatIDR(totalSpent)} / Rp${formatIDR(budgetLimit)} (${pct}%)`
-            : `⚠️ *${catName} budget exceeded!* Rp${formatIDR(totalSpent)} / Rp${formatIDR(budgetLimit)} (${pct}%)`,
-        );
-      } else if (pct >= 80) {
-        warnings.push(
-          lang === 'id'
-            ? `⚠️ Budget ${catName}: Rp${formatIDR(totalSpent)} / Rp${formatIDR(budgetLimit)} (${pct}%)`
-            : `⚠️ ${catName} budget: Rp${formatIDR(totalSpent)} / Rp${formatIDR(budgetLimit)} (${pct}%)`,
-        );
-      }
-    }
-  }
-
-  const header =
-    lang === 'id'
-      ? '✅ *' + items.length + ' transaksi tercatat!*'
-      : '✅ *' + items.length + ' transactions recorded!*';
-
-  const footer =
-    '\n\n🏦 ' +
-    (lang === 'id' ? 'Total' : 'Total') +
-    ': ' +
-    totalStr +
-    '\n\n' +
-    (lang === 'id'
-      ? '_Balas pesan ini untuk edit atau hapus_'
-      : '_Reply to edit or delete a transaction_') +
-    (warnings.length > 0 ? '\n\n' + warnings.join('\n') : '');
-
-  const reply = header + '\n\n' + lines.join('\n\n') + footer;
-  const botMessageId = await sendWA(msg.chatId, reply);
-
-  if (botMessageId) {
-    const ids = inserted.map((r) => r.id);
-    await supabase
-      .from('transactions')
-      .update({ wa_bot_message_id: botMessageId })
-      .in('id', ids);
-  }
+  // Exact decimal receipt total; do not introduce floating-point rounding into receipt formatting.
+  const cents = inserted.reduce((sum, txn) => {
+    const [whole, fraction] = txn.amount.split('.');
+    const amount = BigInt(whole) * 100n + BigInt(fraction);
+    return sum + (txn.type === 'expense' ? amount : -amount);
+  }, 0n);
+  const absolute = cents < 0n ? -cents : cents;
+  const total = `${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
+  const header = lang === 'id' ? `✅ *${inserted.length} transaksi tercatat!*` : `✅ *${inserted.length} transactions recorded!*`;
+  const lines = inserted.map((txn, i) => `${i + 1}. ${transactionReceipt(txn, categories, lang)}`);
+  const warnings = await budgetWarnings(inserted, categories, account.id, lang);
+  const footer = `\n\n🏦 Total: ${cents >= 0n ? '-' : '+'}Rp${formatIDR(total)}`;
+  await deliverTransactionReceipt(inserted, account, msg, header + '\n\n' + lines.join('\n\n') + footer + warnings);
 }

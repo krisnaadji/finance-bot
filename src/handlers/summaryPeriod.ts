@@ -110,7 +110,8 @@ async function fetchSalaryRows(
   if (options.limit) query = query.limit(options.limit);
 
   const { data, error } = await query;
-  return { rows: ((data ?? []) as SalaryRow[]).filter(isGajiRow), error };
+  if (error || !Array.isArray(data)) return { rows: [], error: error ?? new Error('Salary lookup unavailable') };
+  return { rows: (data as SalaryRow[]).filter(isGajiRow), error: null };
 }
 
 export async function resolveSummaryPeriod(

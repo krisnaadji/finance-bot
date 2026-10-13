@@ -4,6 +4,7 @@ import { formatIDR } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { AIResponse, Account, IncomingMessage } from '../ai/types';
 import { resolveSummaryPeriod } from './summaryPeriod';
+import { BotWriteError } from './transactionData';
 
 export async function getSummary(
   ai: AIResponse,
@@ -18,26 +19,23 @@ export async function getSummary(
   });
 
   if (!periodResult.ok) {
-    const reply =
-      periodResult.reason === 'salary_not_found'
-        ? lang === 'id'
-          ? 'Belum ada pemasukan kategori *Gaji*. Catat gaji dulu, lalu coba */rekap gaji*.'
-          : 'No income transaction categorized as *Gaji* was found. Record salary first, then try */summary salary*.'
-        : lang === 'id'
-          ? 'Gagal mengambil periode ringkasan.'
-          : 'Failed to resolve summary period.';
+    if (periodResult.reason === 'query_failed') throw new BotWriteError('dependency');
+    const reply = lang === 'id'
+      ? 'Belum ada pemasukan kategori *Gaji*. Catat gaji dulu, lalu coba */rekap gaji*.'
+      : 'No income transaction categorized as *Gaji* was found. Record salary first, then try */summary salary*.';
     await sendWA(msg.chatId, reply);
     return;
   }
 
   const { from, to } = periodResult;
 
-  const { data: txns } = await supabase
+  const { data: txns, error } = await supabase
     .from('transactions')
     .select('amount, type, categories(name)')
     .eq('account_id', account.id)
     .gte('date', from)
     .lte('date', to);
+  if (error || !Array.isArray(txns)) throw new BotWriteError('dependency');
 
   const rows = txns ?? [];
   const income = rows

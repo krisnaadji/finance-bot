@@ -3,6 +3,7 @@ import { sendWA } from '../services/whatsapp';
 import { formatIDR, formatDate } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { Account, IncomingMessage } from '../ai/types';
+import { BotWriteError } from './transactionData';
 
 export async function searchTxn(
   query: string,
@@ -18,13 +19,14 @@ export async function searchTxn(
     return;
   }
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('transactions')
     .select('*, categories(name)')
     .eq('account_id', account.id)
     .ilike('description', `%${query}%`)
     .order('date', { ascending: false })
     .limit(10);
+  if (error || !Array.isArray(data)) throw new BotWriteError('dependency');
 
   const rows = data ?? [];
 
