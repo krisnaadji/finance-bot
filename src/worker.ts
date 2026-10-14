@@ -4,6 +4,7 @@ import { IncomingMessage } from './ai/types';
 import { routeMessage } from './router';
 import { logger, safeSummarizeMsg } from './utils/logger';
 import { verifyFonnteToken, verifyMetaSignature } from './utils/webhookAuth';
+import { readWebhookBody } from './intake/http';
 
 const app = new Hono();
 
@@ -75,7 +76,12 @@ app.post('/webhook', async (c) => {
 
   // Read the body once, as text. Meta signs the original bytes, so nothing may
   // parse and reserialize before verification. Never use c.req.json() here.
-  const rawBody = await c.req.text();
+  let rawBody: string;
+  try {
+    rawBody = await readWebhookBody(c.req.raw);
+  } catch (error) {
+    return c.text('Invalid webhook body', error instanceof Error && error.message === 'webhook_body_too_large' ? 413 : 400);
+  }
 
   if (gateway === 'fonnte') {
     const expected = process.env.FONNTE_WEBHOOK_TOKEN;
