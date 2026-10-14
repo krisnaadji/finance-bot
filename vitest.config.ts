@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  envDir: false,
   test: {
     // Tests live in `tests/` at the repo root so `src/` stays pure-production.
     // tsconfig's rootDir is `./src`, so putting tests outside keeps tsc build
