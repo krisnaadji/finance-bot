@@ -388,3 +388,13 @@ Keep `DELETE_CONFIRMATIONS_ENABLED=false` until the catalog inspection, both mig
 Batch writes and account/invitation flows still contain multiple database operations. Phase 2 covers their durability. Bilingual categories, salary identity, and image parsing remain later phases.
 
 `/language` looks up the member by account and WhatsApp sender, then updates the existing row or inserts a new preference. Production has no unique constraint on that pair, so the command cannot use a composite-key upsert. Updating the preference preserves the member ID, linked user, role, and display name. Concurrent first-time membership creation remains part of Phase 2.
+
+## Durable recording contracts
+
+The Phase 2 SQL operations key intake by gateway and provider message ID, serialize claims per chat, and require the current lease fence for command persistence and commit. Each financial mutation commits its outcome and immutable reply snapshot in the same database transaction. A repeated identity returns its stored outcome and cannot recreate a transaction deleted later.
+
+Receipt item numbers live in `bot_batch_items`. Deletion clears the transaction reference without changing the original number. Historical mappings in `bot_legacy_receipt_items` require verified original ordinals; a remaining row alone does not establish that a historical receipt originally contained one item.
+
+Edits compare their frozen original financial fields before changing a row and preserve attribution. Description-only edits may retain an inactive historical category. Setup and language commands serialize membership changes through the account lock and do not require a unique account/WhatsApp-phone constraint.
+
+The opt-in Phase 2 database suite accepts only a loopback PostgreSQL URL whose database name begins with `finance_phase2_test`. Supply `FINANCE_TEST_DATABASE_URL` explicitly, with an initially empty disposable database; never use the application or production URL. Run `node node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/intake.db.test.ts tests/integration/botCommit.db.test.ts tests/integration/atomicRouting.db.test.ts`. The fixture contains synthetic accounts and no production credentials. These checks do not authorize deployment, live bot messages, or production migrations.

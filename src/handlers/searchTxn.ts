@@ -11,12 +11,12 @@ export async function searchTxn(
   msg: IncomingMessage,
   lang: Lang,
 ) {
+  return sendWA(msg.chatId, await searchReply(query, account, lang));
+}
+
+export async function searchReply(query: string, account: Account, lang: Lang): Promise<string> {
   if (!query.trim()) {
-    await sendWA(
-      msg.chatId,
-      lang === 'id' ? '🔍 Contoh: /cari netflix' : '🔍 Example: /cari netflix',
-    );
-    return;
+    return lang === 'id' ? '🔍 Contoh: /cari netflix' : '🔍 Example: /cari netflix';
   }
 
   const { data, error } = await supabase
@@ -31,13 +31,9 @@ export async function searchTxn(
   const rows = data ?? [];
 
   if (!rows.length) {
-    await sendWA(
-      msg.chatId,
-      lang === 'id'
-        ? `🔍 Tidak ada transaksi yang cocok dengan *"${query}"*`
-        : `🔍 No transactions found for *"${query}"*`,
-    );
-    return;
+    return lang === 'id'
+      ? `🔍 Tidak ada transaksi yang cocok dengan *"${query}"*`
+      : `🔍 No transactions found for *"${query}"*`;
   }
 
   const lines = rows.map((t) => {
@@ -53,5 +49,5 @@ export async function searchTxn(
       ? `🔍 *Hasil pencarian "${query}":*\n`
       : `🔍 *Search results for "${query}":*\n`;
 
-  await sendWA(msg.chatId, header + lines.join('\n'));
+  return header + lines.join('\n');
 }

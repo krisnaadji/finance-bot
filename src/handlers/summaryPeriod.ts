@@ -27,8 +27,7 @@ type SalaryRow = {
   categories?: unknown;
 };
 
-function resolveCalendarPeriod(period: string): SummaryPeriodResult {
-  const now = new Date();
+function resolveCalendarPeriod(period: string, now: Date): SummaryPeriodResult {
   const today = businessDate(now);
   const [year, month] = today.split('-').map(Number);
   if (period === 'last_month') {
@@ -85,8 +84,9 @@ export async function resolveSummaryPeriod(
   period: SummaryPeriod,
   accountId: string,
   target: SalaryPeriodTarget = {},
+  referenceInstant: Date = new Date(),
 ): Promise<SummaryPeriodResult> {
-  if (period !== 'salary_cycle') return resolveCalendarPeriod(period);
+  if (period !== 'salary_cycle') return resolveCalendarPeriod(period, referenceInstant);
 
   let salaryMonth = target.salaryMonth;
   let salaryYear = target.salaryYear;
@@ -126,7 +126,7 @@ export async function resolveSummaryPeriod(
   if (nextSalary.error) return { ok: false, reason: 'query_failed' };
 
   const nextMarker = nextSalary.rows[0]?.date;
-  const to = nextMarker ? shiftCivilDay(String(nextMarker), -1) : businessDate(new Date());
+  const to = nextMarker ? shiftCivilDay(String(nextMarker), -1) : businessDate(referenceInstant);
 
   return {
     ok: true,

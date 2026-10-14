@@ -12,19 +12,22 @@ export async function getSummary(
   msg: IncomingMessage,
   lang: Lang,
 ) {
+  return sendWA(msg.chatId, await summaryReply(ai, account, lang));
+}
+
+export async function summaryReply(ai: AIResponse, account: Account, lang: Lang, referenceInstant: Date = new Date()): Promise<string> {
   const period = ai.payload.period || 'this_month';
   const periodResult = await resolveSummaryPeriod(period, account.id, {
     salaryMonth: ai.payload.salary_month,
     salaryYear: ai.payload.salary_year,
-  });
+  }, referenceInstant);
 
   if (!periodResult.ok) {
     if (periodResult.reason === 'query_failed') throw new BotWriteError('dependency');
     const reply = lang === 'id'
       ? 'Belum ada pemasukan kategori *Gaji*. Catat gaji dulu, lalu coba */rekap gaji*.'
       : 'No income transaction categorized as *Gaji* was found. Record salary first, then try */summary salary*.';
-    await sendWA(msg.chatId, reply);
-    return;
+    return reply;
   }
 
   const { from, to } = periodResult;
@@ -122,5 +125,5 @@ export async function getSummary(
         catLines +
         (dashUrl ? '\n\n📱 Dashboard: ' + dashUrl : '');
 
-  await sendWA(msg.chatId, reply);
+  return reply;
 }

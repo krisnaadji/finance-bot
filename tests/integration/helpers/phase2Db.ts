@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+types.setTypeParser(1082, value => value);
 
 export interface Fixture {
   accountId: string;
@@ -36,16 +38,16 @@ export async function initializeFixture(): Promise<void> {
   if (initialized) return;
   const existing = await sql(`select c.relname from pg_catalog.pg_class c
     join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-    where n.nspname in ('public','auth') and c.relkind in ('r','p','v','m','f','S')
+    where n.nspname in ('public','auth','bot_private') and c.relkind in ('r','p','v','m','f','S')
     union all select p.proname from pg_catalog.pg_proc p
     join pg_catalog.pg_namespace n on n.oid=p.pronamespace
-    where n.nspname in ('public','auth') and not exists (
+    where n.nspname in ('public','auth','bot_private') and not exists (
       select 1 from pg_catalog.pg_depend d where d.classid='pg_proc'::regclass
       and d.objid=p.oid and d.deptype='e')`);
   if (existing.length) throw new Error('Disposable schema is not empty');
   const schemas = await sql<{ present: boolean }>(
-    "select exists(select 1 from pg_catalog.pg_namespace where nspname='auth') as present");
-  if (schemas[0].present) throw new Error('Disposable auth schema is not empty');
+    "select exists(select 1 from pg_catalog.pg_namespace where nspname in ('auth','bot_private')) as present");
+  if (schemas[0].present) throw new Error('Disposable reserved schema is not empty');
   ownsFixture = true;
   await sql(await readFile(new URL('../fixtures/phase2.sql', import.meta.url), 'utf8'));
   for (const file of ['202610120001_expand_delete_confirmations.sql', '202610120002_enforce_delete_confirmations.sql']) {
@@ -105,7 +107,7 @@ export async function seedLinkedFixture(): Promise<Fixture> {
 export async function closeFixture(): Promise<void> {
   try {
     if (ownsFixture) {
-      await sql('drop schema public cascade; create schema public; drop schema auth cascade');
+      await sql('drop schema if exists bot_private cascade; drop schema public cascade; create schema public; drop schema auth cascade');
       ownsFixture = false;
       initialized = false;
       applied.clear();

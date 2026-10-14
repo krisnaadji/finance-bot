@@ -54,7 +54,7 @@ export interface IncomingMessage {
 export interface TxnForBot {
   id: string;
   description: string;
-  amount: number;
+  amount: string;
   category_name: string;
   date: string;
 }

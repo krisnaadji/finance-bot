@@ -19,7 +19,7 @@ create table public.members (
  id uuid primary key default gen_random_uuid(), account_id uuid not null references public.accounts(id),
  user_id uuid references auth.users(id), wa_phone text, role text not null default 'member',
  display_name text, language_pref text, created_at timestamptz not null default now(),
- unique(account_id,user_id), unique(account_id,wa_phone)
+ unique(account_id,user_id)
 );
 create table public.categories (
  id uuid primary key default gen_random_uuid(), account_id uuid not null references public.accounts(id),

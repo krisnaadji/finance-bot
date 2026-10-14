@@ -12,7 +12,7 @@ import { BotDeliveryError, BotWriteError } from '../src/handlers/transactionData
 import { t } from '../src/i18n/bot';
 let db: SecurityDb; let account: Account;
 const msg: IncomingMessage = { messageId: 'request-1', chatId: 'test-group', rawFrom: 'requester-A', text: 'delete', repliedToId: 'old-receipt' };
-const txn: TxnForBot = { id: txnId, amount: 20, description: 'Existing', date: '2026-10-12', category_name: 'Food' };
+const txn: TxnForBot = { id: txnId, amount: '20.00', description: 'Existing', date: '2026-10-12', category_name: 'Food' };
 beforeEach(() => { vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true'); db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue('prompt-1'); });
 afterEach(() => vi.unstubAllEnvs());
 const pending = (): PendingAction => db.tables.pending_actions[0] as unknown as PendingAction;
@@ -108,7 +108,7 @@ it.each(['upsert', 'update'] as const)('pending %s zero-row write cannot create 
   expect(db.rpcCalls).toEqual([]);
 });
 it('delete prompt reloads canonical stored values instead of trusting the passed context', async () => {
-  await deleteTxn({ ...txn, amount: 999, description: 'Fabricated', category_name: 'Invented' }, account, msg, 'en');
+  await deleteTxn({ ...txn, amount: '999.00', description: 'Fabricated', category_name: 'Invented' }, account, msg, 'en');
   const prompt = state.sendWA.mock.calls[0][1];
   expect(prompt).toContain('Existing');
   expect(prompt).toContain('Rp20');

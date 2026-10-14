@@ -9,6 +9,10 @@ export async function getCategories(
   msg: IncomingMessage,
   lang: Lang,
 ) {
+  return sendWA(msg.chatId, await categoriesReply(account, lang));
+}
+
+export async function categoriesReply(account: Account, lang: Lang): Promise<string> {
   const { data: cats, error } = await supabase
     .from('categories')
     .select('name, type')
@@ -36,5 +40,5 @@ export async function getCategories(
         '\n\n🏷 *Expense Categories:*\n' +
         expense.join('\n');
 
-  await sendWA(msg.chatId, reply);
+  return reply;
 }

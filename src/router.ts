@@ -80,7 +80,7 @@ async function findTxnByReply(messageId: string, accountId: string): Promise<Txn
       const raw: unknown = result.data;
       const txn = canonicalTxn(raw, accountId);
       const category = isRecord(raw) && isRecord(raw.categories) ? raw.categories : null;
-      return { id: txn.id, description: txn.description, amount: Number(txn.amount), date: txn.date,
+      return { id: txn.id, description: txn.description, amount: txn.amount, date: txn.date,
         category_name: typeof category?.name === 'string' ? category.name : '' };
     }
   }

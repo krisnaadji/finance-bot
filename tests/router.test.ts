@@ -14,7 +14,7 @@ import { deleteTxn } from '../src/handlers/deleteTxn';
 import { t } from '../src/i18n/bot';
 let db: SecurityDb; let account: Account;
 const base: IncomingMessage = { messageId: 'incoming-1', chatId: 'test-group', rawFrom: 'requester-A', text: 'test', repliedToId: null };
-const txn: TxnForBot = { id: txnId, description: 'Existing', amount: 20, date: '2026-10-12', category_name: 'Food' };
+const txn: TxnForBot = { id: txnId, description: 'Existing', amount: '20.00', date: '2026-10-12', category_name: 'Food' };
 beforeEach(() => {
   vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true');
   db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account;
