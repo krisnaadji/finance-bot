@@ -19,11 +19,24 @@ export class SecurityDb {
   rpcCalls: { name: string; args: Row }[] = [];
   clock = Date.now();
   rpcError: null | { code: string } = null;
+  rpcResponses: Partial<Record<'load_bot_help_context' | 'finance_summary' | 'finance_budget_spending', unknown>> = {};
   sequence = 10;
   from(table: string): Query { return new Query(this, table); }
   async rpc(name: string, args: Row): Promise<Result> {
-    if (name !== 'consume_delete_confirmation') throw new Error('Unexpected fixture RPC');
     this.rpcCalls.push({ name, args });
+    if (name === 'consume_delete_confirmation') return this.consumeDeleteConfirmation(args);
+    if (name === 'load_bot_help_context') {
+      return { data: this.rpcResponses.load_bot_help_context ?? false, error: null };
+    }
+    if (name === 'finance_budget_spending') {
+      return { data: this.rpcResponses.finance_budget_spending ?? { spendingByCategoryId: {} }, error: null };
+    }
+    if (name === 'finance_summary' && this.rpcResponses.finance_summary !== undefined) {
+      return { data: this.rpcResponses.finance_summary, error: null };
+    }
+    throw new Error('Unexpected fixture RPC');
+  }
+  private async consumeDeleteConfirmation(args: Row): Promise<Result> {
     if (this.rpcError) return { data: null, error: this.rpcError };
     // This fixture derives outcomes from stored state. SQL clock, concurrency and rollback proof is separate.
     if ((args.p_decision !== 'confirm' && args.p_decision !== 'cancel') ||

@@ -1,8 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { AIResponse, Account, IncomingMessage } from '../src/ai/types';
 import { seedSecurityDb, accountId, foreignAccountId, expenseId, incomeId, inactiveId, txnId, type SecurityDb } from './helpers/securityDb';
+import type { SendOutcome } from '../src/delivery/types';
 import type { Row } from './helpers/securityDb';
-const state = vi.hoisted(() => ({ db: null as unknown, sendWA: vi.fn<(to: string, text: string) => Promise<string>>() }));
+const accepted = (providerMessageId: string): SendOutcome => ({ kind: 'accepted', providerMessageId });
+const state = vi.hoisted(() => ({ db: null as unknown, sendWA: vi.fn<(to: string, text: string) => Promise<SendOutcome>>() }));
 vi.mock('../src/services/supabase', () => ({ supabase: new Proxy({}, { get: (_target, key) => {
   const db = state.db as SecurityDb;
   const value = db[key as keyof typeof db]; return typeof value === 'function' ? value.bind(db) : value;
@@ -19,7 +21,7 @@ let db: SecurityDb;
 let account: Account;
 const msg: IncomingMessage = { messageId: 'incoming-1', chatId: 'test-group', rawFrom: 'requester-A', text: 'test input', repliedToId: null };
 const payload = { amount: '35.50', type: 'expense' as const, date: '2026-10-12', description: 'Lunch', category: 'Food' };
-beforeEach(() => { db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue('new-receipt'); });
+beforeEach(() => { db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue(accepted('new-receipt')); });
 it.each(['amount', 'type', 'date'])('single/batch invalid %s causes no financial write', async (key) => {
   const bad: Record<string, unknown> = { ...payload }; delete bad[key];
   await expect(createTxn({ action: 'CREATE_TRANSACTION', payload: bad } as AIResponse, account, msg, 'en')).rejects.toBeInstanceOf(InvalidAICommand);
@@ -41,7 +43,7 @@ it('success reflects persisted exact amount, category and attribution', async ()
   expect(state.sendWA.mock.calls[0][1]).toContain('Rp35,50'); expect(state.sendWA.mock.calls[0][1]).toContain('Food');
 });
 it('a receipt send failure does not compensate or repeat a committed insert', async () => {
-  state.sendWA.mockRejectedValueOnce(new Error('transport down'));
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'transport_unknown' });
   await expect(createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
   expect(db.tables.transactions).toHaveLength(2); expect(db.writes.filter((write) => write.table === 'transactions' && write.mode === 'insert')).toHaveLength(1);
 });
@@ -144,7 +146,7 @@ it('zero-row receipt-ID update is observable, not a second financial write', asy
   expect(db.writes.filter((row) => row.table === 'transactions' && row.mode === 'insert')).toHaveLength(1);
 });
 it('empty provider receipt ID never binds a transaction and never repeats the insert', async () => {
-  state.sendWA.mockResolvedValueOnce('');
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'missing_provider_id' });
   await expect(createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
   expect(db.tables.transactions).toHaveLength(2);
   expect(db.tables.transactions[1].wa_bot_message_id).toBeUndefined();
@@ -167,7 +169,7 @@ it('duplicate category is a conflict rather than an insertion or successful rece
   expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('category post-commit send failure is observable without repeating the save', async () => {
-  state.sendWA.mockRejectedValueOnce(new Error('receipt transport down'));
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'transport_unknown' });
   await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
   expect(db.tables.categories.at(-1)?.name).toBe('Travel');
   expect(db.writes.filter((row) => row.table === 'categories' && row.mode === 'insert')).toHaveLength(1);

@@ -3,6 +3,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "ESNext.Promise"],
     "types": ["node", "@cloudflare/workers-types"]

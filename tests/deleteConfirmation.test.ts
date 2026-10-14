@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account, IncomingMessage, PendingAction, TxnForBot } from '../src/ai/types';
 import { seedSecurityDb, txnId, type SecurityDb } from './helpers/securityDb';
-const state = vi.hoisted(() => ({ db: null as unknown, sendWA: vi.fn<(to: string, text: string) => Promise<string>>() }));
+import type { SendOutcome } from '../src/delivery/types';
+const accepted = (providerMessageId: string): SendOutcome => ({ kind: 'accepted', providerMessageId });
+const state = vi.hoisted(() => ({ db: null as unknown, sendWA: vi.fn<(to: string, text: string) => Promise<SendOutcome>>() }));
 vi.mock('../src/services/supabase', () => ({ supabase: new Proxy({}, { get: (_target, key) => {
   const db = state.db as SecurityDb; const value = db[key as keyof typeof db];
   return typeof value === 'function' ? value.bind(db) : value;
@@ -13,7 +15,7 @@ import { t } from '../src/i18n/bot';
 let db: SecurityDb; let account: Account;
 const msg: IncomingMessage = { messageId: 'request-1', chatId: 'test-group', rawFrom: 'requester-A', text: 'delete', repliedToId: 'old-receipt' };
 const txn: TxnForBot = { id: txnId, amount: '20.00', description: 'Existing', date: '2026-10-12', category_name: 'Food' };
-beforeEach(() => { vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true'); db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue('prompt-1'); });
+beforeEach(() => { vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true'); db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue(accepted('prompt-1')); });
 afterEach(() => vi.unstubAllEnvs());
 const pending = (): PendingAction => db.tables.pending_actions[0] as unknown as PendingAction;
 it('disabled rollout cannot create a prompt or consume an existing action', async () => {
@@ -26,36 +28,36 @@ it('disabled rollout cannot create a prompt or consume an existing action', asyn
 });
 it('different requesters coexist and replacements use fresh IDs for only their tuple', async () => {
   await deleteTxn(txn, account, msg, 'en'); const firstA = pending().id;
-  state.sendWA.mockResolvedValueOnce('prompt-B'); await deleteTxn(txn, account, { ...msg, rawFrom: 'requester-B' }, 'en');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-B')); await deleteTxn(txn, account, { ...msg, rawFrom: 'requester-B' }, 'en');
   const firstB = db.tables.pending_actions.find((row) => row.requested_by_phone === 'requester-B')!.id;
-  state.sendWA.mockResolvedValueOnce('prompt-A2'); await deleteTxn(txn, account, msg, 'en');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-A2')); await deleteTxn(txn, account, msg, 'en');
   expect(db.tables.pending_actions).toHaveLength(2);
   expect(db.tables.pending_actions.find((row) => row.requested_by_phone === 'requester-A')!.id).not.toBe(firstA);
   expect(db.tables.pending_actions.find((row) => row.requested_by_phone === 'requester-B')!.id).toBe(firstB);
 });
 it('row is non-confirmable until provider send resolves and its ID persists', async () => {
-  const send = Promise.withResolvers<string>();
+  const send = Promise.withResolvers<SendOutcome>();
   const entered = Promise.withResolvers<void>();
   state.sendWA.mockImplementationOnce(() => { entered.resolve(); return send.promise; });
   const request = deleteTxn(txn, account, msg, 'en');
   await entered.promise;
-  expect(pending().confirmation_message_id).toBeNull(); send.resolve('sent-prompt'); await request;
+  expect(pending().confirmation_message_id).toBeNull(); send.resolve(accepted('sent-prompt')); await request;
   expect(pending().confirmation_message_id).toBe('sent-prompt');
 });
 it('late old send cannot bind the replacement action', async () => {
-  const send = Promise.withResolvers<string>();
+  const send = Promise.withResolvers<SendOutcome>();
   const entered = Promise.withResolvers<void>();
   state.sendWA.mockImplementationOnce(() => { entered.resolve(); return send.promise; });
   const first = deleteTxn(txn, account, msg, 'en');
   const rejectedFirst = expect(first).rejects.toBeInstanceOf(BotWriteError);
   await entered.promise;
-  state.sendWA.mockResolvedValueOnce('new-prompt'); await deleteTxn(txn, account, msg, 'en');
-  send.resolve('old-prompt'); await rejectedFirst;
+  state.sendWA.mockResolvedValueOnce(accepted('new-prompt')); await deleteTxn(txn, account, msg, 'en');
+  send.resolve(accepted('old-prompt')); await rejectedFirst;
   expect(pending().confirmation_message_id).toBe('new-prompt');
 });
-it.each(['empty', 'throw'] as const)('failed prompt %s remains non-confirmable', async (mode) => {
-  if (mode === 'empty') { state.sendWA.mockResolvedValueOnce(''); await deleteTxn(txn, account, msg, 'en'); }
-  else { state.sendWA.mockRejectedValueOnce(new Error('send failed')); await expect(deleteTxn(txn, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError); }
+it.each(['missing_provider_id', 'transport_unknown'] as const)('uncertain prompt outcome %s remains non-confirmable', async (code) => {
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code });
+  await expect(deleteTxn(txn, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
   expect(pending().confirmation_message_id).toBeNull();
   await confirmDelete({ ...msg, text: 'yes', repliedToId: 'guessed-id' }, pending(), account, 'en');
   expect(db.rpcCalls).toEqual([]); expect(db.tables.transactions).toHaveLength(1);
@@ -139,9 +141,9 @@ it('target deletion retires only its own obsolete prompts; unrelated targets sur
   db.tables.transactions.push({ ...db.tables.transactions[0], id: otherId, description: 'Other' });
   await deleteTxn(txn, account, msg, 'en');
   const requestA = { ...pending() };
-  state.sendWA.mockResolvedValueOnce('prompt-B');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-B'));
   await deleteTxn(txn, account, { ...msg, rawFrom: 'requester-B' }, 'en');
-  state.sendWA.mockResolvedValueOnce('prompt-C');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-C'));
   await deleteTxn({ ...txn, id: otherId }, account, { ...msg, rawFrom: 'requester-C' }, 'en');
   await confirmDelete({ ...msg, text: 'yes', repliedToId: 'prompt-1' }, requestA, account, 'en');
   expect(db.tables.transactions.map((row) => row.id)).toEqual([otherId]);
@@ -151,7 +153,7 @@ it('target deletion retires only its own obsolete prompts; unrelated targets sur
 it('cancelling one requester leaves another requester and the target intact', async () => {
   await deleteTxn(txn, account, msg, 'en');
   const requestA = { ...pending() };
-  state.sendWA.mockResolvedValueOnce('prompt-B');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-B'));
   await deleteTxn(txn, account, { ...msg, rawFrom: 'requester-B' }, 'en');
   await confirmDelete({ ...msg, text: 'no', repliedToId: 'prompt-1' }, requestA, account, 'en');
   expect(db.tables.transactions.map((row) => row.id)).toEqual([txnId]);
@@ -160,7 +162,7 @@ it('cancelling one requester leaves another requester and the target intact', as
 it('a post-consumption send failure leaves one committed deletion, without retrying it', async () => {
   await deleteTxn(txn, account, msg, 'en');
   const row = { ...pending() };
-  state.sendWA.mockRejectedValueOnce(new Error('receipt transport down'));
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'transport_unknown' });
   await expect(confirmDelete({ ...msg, text: 'yes', repliedToId: 'prompt-1' }, row, account, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
   expect(db.tables.transactions).toEqual([]);
   expect(db.tables.pending_actions).toEqual([]);

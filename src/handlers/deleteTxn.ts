@@ -27,14 +27,11 @@ export async function deleteTxn(txn: TxnForBot, account: Account, msg: IncomingM
   if (!isRecord(pending.data) || pending.data.id !== pendingId) throw new BotWriteError('missing');
   let confirmationId: string;
   try {
-    confirmationId = await sendWA(msg.chatId, t[lang].deleteConfirm(saved.description, formatIDR(saved.amount),
-      categoryName(saved, categories, lang), formatDate(saved.date, lang)));
+    const outcome=await sendWA(msg.chatId,t[lang].deleteConfirm(saved.description,formatIDR(saved.amount),
+      categoryName(saved,categories,lang),formatDate(saved.date,lang)));
+    if(outcome.kind!=='accepted')throw new BotDeliveryError();
+    confirmationId=outcome.providerMessageId;
   } catch { throw new BotDeliveryError(); }
-  if (typeof confirmationId !== 'string' || !confirmationId.trim()) {
-    // Initial row remains null-bound and therefore cannot be consumed. No guessed gateway fallback.
-    await sendWA(msg.chatId, t[lang].confirmationUnsupported);
-    return;
-  }
   const bound = await supabase.from('pending_actions').update({ confirmation_message_id: confirmationId })
     .eq('id', pendingId).eq('account_id', account.id).eq('wa_chat_id', msg.chatId).eq('requested_by_phone', msg.rawFrom)
     .select('id,confirmation_message_id').maybeSingle();
@@ -61,5 +58,10 @@ export async function confirmDelete(msg: IncomingMessage, pending: PendingAction
   const outcome = result.data as DeleteConfirmationOutcome;
   const reply = outcome === 'deleted' ? t[lang].txnDeleted : outcome === 'cancelled' ? t[lang].txnDeleteCancel :
     outcome === 'expired' ? t[lang].confirmationExpired : outcome === 'target_missing' ? t[lang].resourceMissing : t[lang].confirmationHandled;
-  try { await sendWA(msg.chatId, reply); } catch { throw new BotDeliveryError(); }
+  try {
+    const delivery = await sendWA(msg.chatId, reply);
+    if (delivery.kind !== 'accepted') throw new BotDeliveryError();
+  } catch {
+    throw new BotDeliveryError();
+  }
 }

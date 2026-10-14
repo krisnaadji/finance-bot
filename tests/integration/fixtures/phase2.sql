@@ -27,6 +27,11 @@ create table public.categories (
  is_custom boolean not null default false, is_active boolean not null default true,
  sort_order integer not null default 0, created_at timestamptz not null default now()
 );
+create function public.seed_categories(p_account_id uuid) returns void
+language sql set search_path='' as $$
+ insert into public.categories(account_id,name,type,is_custom)
+ values(p_account_id,'Fixture seeded category','expense',false)
+$$;
 create table public.transactions (
  id uuid primary key default gen_random_uuid(), account_id uuid not null references public.accounts(id),
  category_id uuid references public.categories(id), amount numeric(15,2) not null check(amount>0),

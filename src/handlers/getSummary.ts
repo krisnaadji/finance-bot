@@ -1,10 +1,11 @@
-import { supabase } from '../services/supabase';
 import { sendWA } from '../services/whatsapp';
+import { getFinanceSummary, cents, formatCents, type FinanceSummary } from '../services/reporting';
 import { formatIDR } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { AIResponse, Account, IncomingMessage } from '../ai/types';
 import { resolveSummaryPeriod } from './summaryPeriod';
 import { BotWriteError } from './transactionData';
+import { t } from '../i18n/bot';
 
 export async function getSummary(
   ai: AIResponse,
@@ -31,34 +32,23 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
   }
 
   const { from, to } = periodResult;
-
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('amount, type, categories(name)')
-    .eq('account_id', account.id)
-    .gte('date', from)
-    .lte('date', to);
-  if (error || !Array.isArray(txns)) throw new BotWriteError('dependency');
-
-  const rows = txns ?? [];
-  const income = rows
-    .filter((txn) => txn.type === 'income')
-    .reduce((sum, txn) => sum + Number(txn.amount), 0);
-  const expense = rows
-    .filter((txn) => txn.type === 'expense')
-    .reduce((sum, txn) => sum + Number(txn.amount), 0);
-  const net = income - expense;
-
-  const byCategory: Record<string, number> = {};
-  for (const txn of rows.filter((row) => row.type === 'expense')) {
-    const name = (txn.categories as any)?.name ?? 'Lainnya';
-    byCategory[name] = (byCategory[name] ?? 0) + Number(txn.amount);
+  let report: FinanceSummary;
+  try {
+    report = await getFinanceSummary(account.id, from, to);
+  } catch {
+    throw new BotWriteError('dependency');
   }
 
-  const topCategories = Object.entries(byCategory)
-    .sort((a, b) => b[1] - a[1])
+  const expense = cents(report.expense);
+  const net = cents(report.net);
+  const topCategories = report.categories
+    .map((category) => ({
+      name: category.id === null ? t[lang].uncategorized : category.name,
+      amount: cents(category.amount),
+    }))
+    .sort((a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0)
     .slice(0, 5);
-  const netStr = (net >= 0 ? '+' : '-') + 'Rp' + formatIDR(Math.abs(net));
+  const netStr = (net >= 0n ? '+' : '-') + 'Rp' + formatIDR(formatCents(net));
 
   const catLines =
     topCategories.length > 0
@@ -66,18 +56,12 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
         (lang === 'id' ? '🔺 *Top Pengeluaran:*' : '🔺 *Top Expenses:*') +
         '\n' +
         topCategories
-          .map(
-            (category, index) =>
-              index +
-              1 +
-              '. ' +
-              category[0] +
-              ' - Rp' +
-              formatIDR(category[1]) +
-              ' (' +
-              Math.round((category[1] / expense) * 100) +
-              '%)',
-          )
+          .map((category, index) => {
+            const percentage = expense > 0n
+              ? ((category.amount * 100n + expense / 2n) / expense).toString()
+              : '0';
+            return `${index + 1}. ${category.name} - Rp${formatIDR(formatCents(category.amount))} (${percentage}%)`;
+          })
           .join('\n')
       : '';
 
@@ -99,10 +83,10 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
         to +
         '*\n\n' +
         '💰 Pemasukan  : +Rp' +
-        formatIDR(income) +
+        formatIDR(report.income) +
         '\n' +
         '💸 Pengeluaran: -Rp' +
-        formatIDR(expense) +
+        formatIDR(report.expense) +
         '\n' +
         '🏦 Saldo      : ' +
         netStr +
@@ -115,10 +99,10 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
         to +
         '*\n\n' +
         '💰 Income  : +Rp' +
-        formatIDR(income) +
+        formatIDR(report.income) +
         '\n' +
         '💸 Expense : -Rp' +
-        formatIDR(expense) +
+        formatIDR(report.expense) +
         '\n' +
         '🏦 Balance : ' +
         netStr +

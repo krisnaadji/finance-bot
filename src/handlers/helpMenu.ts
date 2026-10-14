@@ -2,9 +2,7 @@ import { AIResponse, IncomingMessage } from '../ai/types';
 import { t } from '../i18n/bot';
 import { sendWA } from '../services/whatsapp';
 import { Lang } from '../utils/lang';
-
-const HELP_CONTEXT_TTL_MS = 15 * 60 * 1000;
-const helpMessageExpiresAt = new Map<string, number>();
+import { supabase } from '../services/supabase';
 
 export type HelpShortcut =
   | 'summary'
@@ -16,40 +14,31 @@ export type HelpShortcut =
   | 'setup_hint';
 
 export async function sendHelp(msg: IncomingMessage, lang: Lang): Promise<void> {
-  const botMessageId = await sendWA(msg.chatId, t[lang].helpText);
-  if (botMessageId) {
-    helpMessageExpiresAt.set(botMessageId, Date.now() + HELP_CONTEXT_TTL_MS);
-  }
+  await sendWA(msg.chatId, t[lang].helpText);
 }
 
-export function resolveHelpShortcut(msg: IncomingMessage): HelpShortcut | null {
-  if (!msg.repliedToId) return null;
+export async function loadHelpContext(accountId: string, chatId: string, providerMessageId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('load_bot_help_context', {
+    p_account_id: accountId,
+    p_chat_id: chatId,
+    p_gateway: process.env.GATEWAY ?? 'meta',
+    p_message_id: providerMessageId,
+  });
+  if (error || typeof data !== 'boolean') throw new Error('help_context_unavailable');
+  return data;
+}
 
-  const expiresAt = helpMessageExpiresAt.get(msg.repliedToId);
-  if (!expiresAt) return null;
-
-  if (expiresAt < Date.now()) {
-    helpMessageExpiresAt.delete(msg.repliedToId);
-    return null;
-  }
-
+export function resolveHelpShortcut(msg: IncomingMessage, hasContext: boolean): HelpShortcut | null {
+  if (!hasContext || !msg.repliedToId) return null;
   switch (msg.text.trim()) {
-    case '1':
-      return 'summary';
-    case '2':
-      return 'salary_summary';
-    case '3':
-      return 'categories';
-    case '4':
-      return 'search_hint';
-    case '5':
-      return 'dashboard';
-    case '6':
-      return 'language_hint';
-    case '7':
-      return 'setup_hint';
-    default:
-      return null;
+    case '1': return 'summary';
+    case '2': return 'salary_summary';
+    case '3': return 'categories';
+    case '4': return 'search_hint';
+    case '5': return 'dashboard';
+    case '6': return 'language_hint';
+    case '7': return 'setup_hint';
+    default: return null;
   }
 }
 

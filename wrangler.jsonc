@@ -4,7 +4,17 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-23",
   "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "queues": {
+    "producers": [{ "binding": "BOT_QUEUE", "queue": "financebot-intake" }],
+    "consumers": [{
+      "queue": "financebot-intake",
+      "max_batch_size": 1,
+      "max_batch_timeout": 0,
+      "max_concurrency": 1
+    }]
+  },
+  "triggers": { "crons": ["* * * * *"] },
 
   // No `vars` block by design. Every configuration value — including the
   // non-secret ones like GATEWAY and LOG_LEVEL — is set with

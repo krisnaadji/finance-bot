@@ -33,6 +33,11 @@ let initialized = false;
 export async function sql<T>(text: string, values: unknown[] = []): Promise<T[]> {
   return (await pool.query(text, values)).rows as T[];
 }
+export async function sqlAs<T>(role:'anon'|'authenticated'|'service_role',text:string,values:unknown[]=[]):Promise<T[]>{
+  const client=await pool.connect();
+  try{await client.query('begin');await client.query(`set local role ${role}`);const result=await client.query(text,values);await client.query('commit');return result.rows as T[];}
+  catch(error){await client.query('rollback');throw error;}finally{client.release();}
+}
 
 export async function initializeFixture(): Promise<void> {
   if (initialized) return;
@@ -65,19 +70,24 @@ const migrations = [
   '202610130006_export_snapshots.sql',
 ];
 const applied = new Set<string>();
+export async function applyPhase2MigrationsThrough(lastFile:string): Promise<void> {
+  await initializeFixture();
+  const end=migrations.indexOf(lastFile);
+  if(end<0)throw new Error('Unknown Phase 2 migration');
+  for(const file of migrations.slice(0,end+1)){
+    if(applied.has(file))continue;
+    const source=await readFile(new URL(`../../../supabase/migrations/${file}`,import.meta.url),'utf8');
+    await sql(source);applied.add(file);
+  }
+}
 export async function applyPhase2Migrations(): Promise<void> {
   await initializeFixture();
-  for (const file of migrations) {
-    if (applied.has(file)) continue;
-    let source: string;
-    try {
-      source = await readFile(new URL(`../../../supabase/migrations/${file}`, import.meta.url), 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') break;
-      throw error;
-    }
-    await sql(source);
-    applied.add(file);
+  for(const file of migrations){
+    if(applied.has(file))continue;
+    let source:string;
+    try{source=await readFile(new URL(`../../../supabase/migrations/${file}`,import.meta.url),'utf8');}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')throw new Error(`Phase 2 migration missing: ${file}`);throw error;}
+    await sql(source);applied.add(file);
   }
 }
 

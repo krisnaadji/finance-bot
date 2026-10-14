@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test:db": "vitest run --config vitest.integration.config.ts"
+    "test:db": "vitest run --config vitest.integration.config.ts",
+    "recover:delivery": "node scripts/recover-delivery.mts"
   },
   "repository": {
     "type": "git",

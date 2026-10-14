@@ -13,7 +13,7 @@ import type { CanonicalTxn, CategoryRow } from '../handlers/transactionData';
 import { categoriesReply } from '../handlers/getCategories';
 import { summaryReply } from '../handlers/getSummary';
 import { searchReply } from '../handlers/searchTxn';
-import { helpShortcutHint, summaryShortcutAi } from '../handlers/helpMenu';
+import { helpShortcutHint, loadHelpContext, summaryShortcutAi } from '../handlers/helpMenu';
 import type { HelpShortcut } from '../handlers/helpMenu';
 import { parseSalaryPeriodArgs } from '../handlers/salaryPeriodArgs';
 import { lookupReceipt } from './commit';
@@ -89,9 +89,7 @@ export async function prepareMessage(claim: InboxClaim): Promise<PreparedCommand
     }
     if (text === '/dashboard') return reply(dashboardReply(lang));
     if (d.repliedToId) {
-      const help=await supabase.rpc('load_bot_help_context',{p_account_id:account.id,p_chat_id:d.chatId,p_gateway:d.gateway,p_message_id:d.repliedToId});
-      if (help.error || typeof help.data !== 'boolean') throw new BotWriteError('dependency');
-      if (help.data) {
+      if (await loadHelpContext(account.id,d.chatId,d.repliedToId)) {
         const shortcuts:Record<string,HelpShortcut>={'1':'summary','2':'salary_summary','3':'categories','4':'search_hint','5':'dashboard','6':'language_hint','7':'setup_hint'};
         const shortcut=shortcuts[text];
         if (shortcut === 'summary' || shortcut === 'salary_summary') return reply(await summaryReply(summaryShortcutAi(shortcut === 'summary' ? 'this_month' : 'salary_cycle'),account,lang,new Date(d.receivedAt)));

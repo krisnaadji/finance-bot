@@ -21,6 +21,10 @@ export async function addCategory(ai: AIResponse, account: Account, msg: Incomin
   const saved: unknown = result.data;
   if (!isRecord(saved) || !isUuid(saved.id) || saved.account_id !== account.id || typeof saved.name !== 'string' ||
       (saved.type !== 'income' && saved.type !== 'expense')) throw new BotWriteError('missing');
-  try { await sendWA(msg.chatId, t[lang].categoryAdded(saved.name, saved.type)); }
-  catch { throw new BotDeliveryError(); }
+  try {
+    const delivery = await sendWA(msg.chatId, t[lang].categoryAdded(saved.name, saved.type));
+    if (delivery.kind !== 'accepted') throw new BotDeliveryError();
+  } catch {
+    throw new BotDeliveryError();
+  }
 }

@@ -6,7 +6,8 @@ function identifier(value: string): string {
 }
 const tables = new Set(['accounts','members','categories','transactions','pending_actions','link_codes','bot_inbox','bot_outbound','bot_help_context','budgets']);
 const functions = new Set(['ingest_bot_messages','claim_bot_message','renew_bot_claim','save_bot_command','fail_bot_message',
-  'commit_bot_command','lookup_bot_receipt','freeze_bot_reply','claim_bot_outbound','settle_bot_outbound','recover_bot_outbound','load_bot_help_context']);
+  'commit_bot_command','lookup_bot_receipt','freeze_bot_reply','claim_bot_outbound','settle_bot_outbound','recover_bot_outbound','load_bot_help_context',
+  'cleanup_expired_finance_exports']);
 
 class ReadQuery implements PromiseLike<{data:Record<string,unknown>[]|null;error:unknown}> {
   private values: unknown[] = [];

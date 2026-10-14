@@ -8,11 +8,12 @@ import crypto from 'node:crypto';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ routeMessage: vi.fn() }));
-vi.mock('../src/router', () => ({ routeMessage: mocks.routeMessage }));
+const mocks = vi.hoisted(() => ({ ingest: vi.fn(), processInbox: vi.fn(), recoverDueWork: vi.fn(), sendBatch: vi.fn() }));
+vi.mock('../src/intake/repository', () => ({ ingest: mocks.ingest }));
+vi.mock('../src/processing/processor', () => ({ processInbox: mocks.processInbox }));
+vi.mock('../src/recovery', () => ({ recoverDueWork: mocks.recoverDueWork }));
 
-import app from '../src/worker';
-
+import app, { queue, scheduled, type WorkerEnv } from '../src/worker';
 /**
  * Fake ExecutionContext. Collects everything passed to waitUntil so tests can
  * await background work deterministically instead of racing it.
@@ -31,7 +32,10 @@ function createCtx() {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  mocks.routeMessage.mockReset();
+  mocks.ingest.mockReset().mockResolvedValue({ ids: [], conflicts: [] });
+  mocks.processInbox.mockReset();
+  mocks.recoverDueWork.mockReset().mockResolvedValue(undefined);
+  mocks.sendBatch.mockReset().mockResolvedValue(undefined);
 });
 
 describe('GET /health', () => {
@@ -241,139 +245,99 @@ describe('POST /webhook — fonnte auth', () => {
   });
 });
 
-describe('POST /webhook — dispatch', () => {
-  it('routes a verified meta message after ACK', async () => {
+describe('POST /webhook — durable intake', () => {
+  const env = () => ({ BOT_QUEUE: { sendBatch: mocks.sendBatch } });
+  it('persists verified provider messages before acknowledging and waking inbox IDs', async () => {
     vi.stubEnv('GATEWAY', 'meta');
     vi.stubEnv('WA_APP_SECRET', APP_SECRET);
-    const { ctx, settled } = createCtx();
+    mocks.ingest.mockResolvedValue({ ids: ['inbox-1'], conflicts: [] });
+    const { ctx } = createCtx();
 
-    const res = await app.request(
-      '/webhook',
-      postMeta(META_BODY, sign(META_BODY, APP_SECRET)),
-      {},
-      ctx,
-    );
-    expect(res.status).toBe(200);
-
-    // Work is scheduled, not awaited inline — the ACK must not wait on it.
-    await settled();
-
-    expect(mocks.routeMessage).toHaveBeenCalledTimes(1);
-    expect(mocks.routeMessage).toHaveBeenCalledWith({
-      messageId: 'wamid.TEST1',
-      chatId: '628123456789',
-      text: 'makan siang 35k',
-      repliedToId: null,
-      rawFrom: '628123456789',
-    });
-  });
-
-  it('does not route a forged message', async () => {
-    vi.stubEnv('GATEWAY', 'meta');
-    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
-    const { ctx, settled } = createCtx();
-
-    await app.request(
-      '/webhook',
-      postMeta(META_BODY, sign(META_BODY, 'attacker-secret')),
-      {},
-      ctx,
-    );
-    await settled();
-
-    expect(mocks.routeMessage).not.toHaveBeenCalled();
-  });
-
-  it('ignores non-text messages without routing', async () => {
-    vi.stubEnv('GATEWAY', 'meta');
-    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
-    const imageBody = JSON.stringify({
-      entry: [
-        { changes: [{ value: { messages: [{ id: 'w1', from: '6281', type: 'image' }] } }] },
-      ],
-    });
-    const { ctx, settled } = createCtx();
-
-    const res = await app.request(
-      '/webhook',
-      postMeta(imageBody, sign(imageBody, APP_SECRET)),
-      {},
-      ctx,
-    );
-    await settled();
+    const res = await app.request('/webhook', postMeta(META_BODY, sign(META_BODY, APP_SECRET)), env(), ctx);
 
     expect(res.status).toBe(200);
-    expect(mocks.routeMessage).not.toHaveBeenCalled();
+    expect(mocks.ingest).toHaveBeenCalledOnce();
+    expect(mocks.ingest.mock.calls[0][0]).toMatchObject([{
+      gateway: 'meta', messageId: 'wamid.TEST1', chatId: '628123456789',
+      rawFrom: '628123456789', text: 'makan siang 35k', repliedToId: null,
+    }]);
+    expect(mocks.sendBatch).toHaveBeenCalledExactlyOnceWith([{ body: { inboxId: 'inbox-1' } }]);
   });
 
-  it('ACKs a verified but malformed body instead of erroring', async () => {
+  it('returns a retryable response when persistence fails', async () => {
     vi.stubEnv('GATEWAY', 'meta');
     vi.stubEnv('WA_APP_SECRET', APP_SECRET);
-    const junk = 'not json at all';
-    const { ctx, settled } = createCtx();
+    mocks.ingest.mockRejectedValueOnce(new Error('database unavailable'));
+    const { ctx } = createCtx();
 
-    const res = await app.request(
-      '/webhook',
-      postMeta(junk, sign(junk, APP_SECRET)),
-      {},
-      ctx,
-    );
-    await settled();
+    const res = await app.request('/webhook', postMeta(META_BODY, sign(META_BODY, APP_SECRET)), env(), ctx);
 
-    // A 500 here would make Meta retry the same broken payload indefinitely.
-    expect(res.status).toBe(200);
-    expect(mocks.routeMessage).not.toHaveBeenCalled();
+    expect(res.status).toBe(503);
+    expect(mocks.sendBatch).not.toHaveBeenCalled();
   });
 
-  it('still ACKs 200 when downstream processing throws', async () => {
+  it('keeps the durable intake acknowledged when the queue wake fails', async () => {
     vi.stubEnv('GATEWAY', 'meta');
     vi.stubEnv('WA_APP_SECRET', APP_SECRET);
-    mocks.routeMessage.mockRejectedValueOnce(new Error('supabase down'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { ctx, settled } = createCtx();
+    mocks.ingest.mockResolvedValue({ ids: ['inbox-1'], conflicts: [] });
+    mocks.sendBatch.mockRejectedValueOnce(new Error('queue unavailable'));
+    const { ctx } = createCtx();
 
-    const res = await app.request(
-      '/webhook',
-      postMeta(META_BODY, sign(META_BODY, APP_SECRET)),
-      {},
-      ctx,
-    );
+    const res = await app.request('/webhook', postMeta(META_BODY, sign(META_BODY, APP_SECRET)), env(), ctx);
 
     expect(res.status).toBe(200);
-    // Must not reject: an unhandled rejection inside waitUntil is invisible.
-    await expect(settled()).resolves.toBeDefined();
+    expect(mocks.ingest).toHaveBeenCalledOnce();
+    expect(mocks.sendBatch).toHaveBeenCalledOnce();
   });
 
-  it('routes a verified fonnte message', async () => {
+  it('ignores non-text messages and malformed verified bodies', async () => {
+    vi.stubEnv('GATEWAY', 'meta');
+    vi.stubEnv('WA_APP_SECRET', APP_SECRET);
+    const image = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id: 'w1', from: '6281', type: 'image' }] } }] }] });
+    const { ctx } = createCtx();
+    const imageResponse = await app.request('/webhook', postMeta(image, sign(image, APP_SECRET)), env(), ctx);
+    const malformed = 'not json';
+    const malformedResponse = await app.request('/webhook', postMeta(malformed, sign(malformed, APP_SECRET)), env(), ctx);
+    expect(imageResponse.status).toBe(200);
+    expect(malformedResponse.status).toBe(200);
+    expect(mocks.ingest).not.toHaveBeenCalled();
+  });
+
+  it('persists and wakes a verified Fonnte message', async () => {
     vi.stubEnv('GATEWAY', 'fonnte');
     vi.stubEnv('FONNTE_WEBHOOK_TOKEN', 'fonnte-secret');
+    mocks.ingest.mockResolvedValue({ ids: ['inbox-f'], conflicts: [] });
+    const { ctx } = createCtx();
+    const res = await app.request('/webhook', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-fonnte-token': 'fonnte-secret' },
+      body: JSON.stringify({ id: 'f-1', sender: '628123456789', message: 'makan siang 35k' }),
+    }, env(), ctx);
+    expect(res.status).toBe(200);
+    expect(mocks.ingest.mock.calls[0][0]).toMatchObject([{ gateway: 'fonnte', messageId: 'f-1' }]);
+    expect(mocks.sendBatch).toHaveBeenCalledExactlyOnceWith([{ body: { inboxId: 'inbox-f' } }]);
+  });
+});
+
+describe('queue and scheduled handlers', () => {
+  it('acks durable outcomes and retries failed processing per message', async () => {
+    mocks.processInbox.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('temporary failure'));
+    const observed: string[] = [];
+    const messages = ['inbox-ok', 'inbox-retry'].map(inboxId => ({
+      body: { inboxId },
+      ack: () => observed.push(`ack:${inboxId}`),
+      retry: () => observed.push(`retry:${inboxId}`),
+    }));
+    await queue({ messages } as unknown as MessageBatch<{ inboxId: string }>);
+    expect(mocks.processInbox.mock.calls.map(([id]) => id)).toEqual(['inbox-ok', 'inbox-retry']);
+    expect(observed.sort()).toEqual(['ack:inbox-ok', 'retry:inbox-retry']);
+  });
+
+  it('runs bounded recovery from the scheduled entry point', async () => {
     const { ctx, settled } = createCtx();
-
-    await app.request(
-      '/webhook',
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-fonnte-token': 'fonnte-secret',
-        },
-        body: JSON.stringify({
-          id: 'f-1',
-          sender: '628123456789',
-          message: 'makan siang 35k',
-        }),
-      },
-      {},
-      ctx,
-    );
+    const env = { BOT_QUEUE: { sendBatch: mocks.sendBatch, send: vi.fn() } };
+    scheduled({} as ScheduledController, env as unknown as WorkerEnv, ctx);
     await settled();
-
-    expect(mocks.routeMessage).toHaveBeenCalledWith({
-      messageId: 'f-1',
-      chatId: '628123456789',
-      text: 'makan siang 35k',
-      repliedToId: null,
-      rawFrom: '628123456789',
-    });
+    expect(mocks.recoverDueWork).toHaveBeenCalledOnce();
+    expect(mocks.recoverDueWork).toHaveBeenCalledWith(env);
   });
 });

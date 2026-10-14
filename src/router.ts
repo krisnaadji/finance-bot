@@ -11,6 +11,7 @@ import { validateAIResponse, InvalidAICommand } from './ai/validation';
 import { BotWriteError, BotDeliveryError, assertActiveLinkedAccount, canonicalTxn, transactionColumns } from './handlers/transactionData';
 import {
   helpShortcutHint,
+  loadHelpContext,
   resolveHelpShortcut,
   sendHelp,
   summaryShortcutAi,
@@ -165,7 +166,7 @@ async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => 
     return sendWA(msg.chatId, reply);
   }
 
-  const helpShortcut = resolveHelpShortcut(msg);
+  const helpShortcut = resolveHelpShortcut(msg, msg.repliedToId ? await loadHelpContext(account.id,msg.chatId,msg.repliedToId) : false);
   if (helpShortcut === 'summary') {
     return getSummary(summaryShortcutAi('this_month'), account, msg, lang);
   }

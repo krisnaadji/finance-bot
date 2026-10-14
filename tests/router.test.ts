@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Account, IncomingMessage, TxnForBot } from '../src/ai/types';
 import { seedSecurityDb, txnId, accountId, foreignAccountId, expenseId, incomeId, type SecurityDb } from './helpers/securityDb';
+import type { SendOutcome } from '../src/delivery/types';
+const accepted = (providerMessageId: string): SendOutcome => ({ kind: 'accepted', providerMessageId });
 const state = vi.hoisted(() => ({ db: null as unknown,
-  sendWA: vi.fn<(to: string, text: string) => Promise<string>>(), ai: vi.fn<(...args: unknown[]) => Promise<unknown>>() }));
+  sendWA: vi.fn<(to: string, text: string) => Promise<SendOutcome>>(), ai: vi.fn<(...args: unknown[]) => Promise<unknown>>() }));
 vi.mock('../src/services/supabase', () => ({ supabase: new Proxy({}, { get: (_target, key) => {
   const db = state.db as SecurityDb; const value = db[key as keyof typeof db];
   return typeof value === 'function' ? value.bind(db) : value;
@@ -18,7 +20,7 @@ const txn: TxnForBot = { id: txnId, description: 'Existing', amount: '20.00', da
 beforeEach(() => {
   vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true');
   db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account;
-  state.sendWA.mockReset().mockResolvedValue('prompt-1'); state.ai.mockReset().mockResolvedValue({ action: 'CREATE_TRANSACTION', payload: { amount: '999.00', type: 'expense', date: '2026-10-12' } });
+  state.sendWA.mockReset().mockResolvedValue(accepted('prompt-1')); state.ai.mockReset().mockResolvedValue({ action: 'CREATE_TRANSACTION', payload: { amount: '999.00', type: 'expense', date: '2026-10-12' } });
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 it.each(['/summary','/search Lunch','/categories'])('read outage in %s is never an empty success',async(text)=>{
@@ -43,7 +45,7 @@ it.each(['ya', 'yes'])('plain %s deletes only the requester target and cannot co
   const otherId = '30000000-0000-4000-8000-000000000002';
   const other = { ...db.tables.transactions[0], id: otherId, description: 'Other transaction' };
   db.tables.transactions.push(other);
-  state.sendWA.mockResolvedValueOnce('prompt-A').mockResolvedValueOnce('prompt-B');
+  state.sendWA.mockResolvedValueOnce(accepted('prompt-A')).mockResolvedValueOnce(accepted('prompt-B'));
   await deleteTxn(txn, account, base, 'en');
   await deleteTxn({ ...txn, id: otherId }, account, { ...base, rawFrom: 'requester-B' }, 'en');
   await routeMessage({ ...base, text: answer, repliedToId: null });
@@ -71,8 +73,8 @@ it('plain ya cannot delete after the database confirmation lifetime', async () =
   expect(db.tables.pending_actions).toEqual([]);
 });
 it('plain ya cannot consume a prompt whose delivery has no provider ID', async () => {
-  state.sendWA.mockResolvedValueOnce('');
-  await deleteTxn(txn, account, base, 'en');
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'missing_provider_id' });
+  await expect(deleteTxn(txn, account, base, 'en')).rejects.toThrow('Post-commit delivery failed');
   await routeMessage({ ...base, text: 'ya', repliedToId: null });
   expect(db.tables.transactions.map(row => row.id)).toEqual([txnId]);
   expect(db.tables.pending_actions.map(row => row.confirmation_message_id)).toEqual([null]);
@@ -174,7 +176,7 @@ it('setup success follows all checked outcomes', async () => {
   expect(db.tables.link_codes[0].used).toBe(true); expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.setupOk('Disposable account'));
 });
 it('post-commit send failure stays observable and does not repeat insert', async () => {
-  state.sendWA.mockRejectedValueOnce(new Error('transport down'));
+  state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'transport_unknown' });
   await expect(routeMessage(base)).rejects.toThrow('Post-commit delivery failed');
   expect(db.tables.transactions).toHaveLength(2); expect(state.sendWA).toHaveBeenCalledTimes(1);
 });
@@ -189,7 +191,7 @@ it('recognized transaction reply cannot turn create output into a new mutation',
 
 it.each(['yes', 'no', 'ya', 'tidak'])('stale %s after replacement cannot reach provider or consume the newer prompt', async (text) => {
   await deleteTxn(txn, account, base, 'en');
-  state.sendWA.mockResolvedValueOnce('new-prompt');
+  state.sendWA.mockResolvedValueOnce(accepted('new-prompt'));
   await deleteTxn(txn, account, base, 'en');
   state.sendWA.mockClear();
   await routeMessage({ ...base, text, repliedToId: 'prompt-1' });
@@ -234,7 +236,7 @@ it('default-disabled rollout reserves confirmations and creates no pending row',
   await routeMessage({ ...base, text: 'yes', repliedToId: 'prompt-1' });
   expect(db.tables.pending_actions).toEqual([]);
   expect(db.tables.transactions).toHaveLength(1);
-  expect(db.rpcCalls).toEqual([]);
+  expect(db.rpcCalls.filter(call => call.name === 'consume_delete_confirmation')).toEqual([]);
   expect(state.ai).toHaveBeenCalledTimes(1);
 });
 it('account deactivation while provider is outstanding blocks the late financial write', async () => {
@@ -320,7 +322,12 @@ it.each([
   expect(state.ai).toHaveBeenCalledTimes(1);
   expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.invalidCommand);
 });
-it('slash summary aggregates only stored transactions of the linked account', async () => {
+it('slash summary renders account-scoped report totals without foreign data', async () => {
+  db.rpcResponses.finance_summary = {
+    income: '0.00', expense: '20.00', net: '-20.00',
+    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
+    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+  };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
   db.tables.transactions.push({ ...db.tables.transactions[0], id: '30000000-0000-4000-8000-000000000002',
     account_id: foreignAccountId, amount: '999.00', description: 'Foreign secret' });
@@ -329,6 +336,9 @@ it('slash summary aggregates only stored transactions of the linked account', as
   expect(reply).toContain('Expense : -Rp20');
   expect(reply).toContain('Food');
   expect(reply).not.toContain('999');
+  expect(db.rpcCalls).toContainEqual({ name: 'finance_summary', args: {
+    p_account_id: accountId, p_from: '2026-10-01', p_to: '2026-10-12',
+  } });
   expect(state.ai).not.toHaveBeenCalled();
   expect(db.writes).toEqual([]);
 });
@@ -353,9 +363,15 @@ it('category slash response lists only active local category data', async () => 
   expect(db.writes).toEqual([]);
   expect(state.ai).not.toHaveBeenCalled();
 });
-it('help reply executes a real stored-data summary without provider classification', async () => {
+it('help reply executes an RPC-backed summary without provider classification', async () => {
+  db.rpcResponses.load_bot_help_context = true;
+  db.rpcResponses.finance_summary = {
+    income: '0.00', expense: '20.00', net: '-20.00',
+    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
+    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+  };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
-  state.sendWA.mockResolvedValueOnce('help-prompt');
+  state.sendWA.mockResolvedValueOnce(accepted('help-prompt'));
   await routeMessage({ ...base, text: '/help' });
   await routeMessage({ ...base, text: '1', repliedToId: 'help-prompt' });
   expect(state.sendWA.mock.calls.at(-1)?.[1]).toContain('Expense : -Rp20');
@@ -364,6 +380,11 @@ it('help reply executes a real stored-data summary without provider classificati
   expect(db.writes).toEqual([]);
 });
 it('salary slash summary retains requested-month marker selection on persisted history', async () => {
+  db.rpcResponses.finance_summary = {
+    income: '100.00', expense: '20.00', net: '80.00',
+    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
+    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+  };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
   db.tables.categories.find((row) => row.id === incomeId)!.name = 'Gaji';
   db.tables.transactions = [
@@ -380,6 +401,9 @@ it('salary slash summary retains requested-month marker selection on persisted h
   expect(reply).toContain('Expense : -Rp20');
   expect(state.ai).not.toHaveBeenCalled();
   expect(db.writes).toEqual([]);
+  expect(db.rpcCalls).toContainEqual({ name: 'finance_summary', args: {
+    p_account_id: accountId, p_from: '2026-09-25', p_to: '2026-10-04',
+  } });
 });
 it('salary marker read outage is a dependency failure, not missing salary', async () => {
   db.failures.push({ table: 'transactions', mode: 'read' });

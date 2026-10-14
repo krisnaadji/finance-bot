@@ -137,12 +137,11 @@ npm install
 
 ### 2. Set up environment
 
-`wrangler dev` reads local secrets and vars from a `.dev.vars` file at the repo
-root (same `KEY=value` format as `.env`, not committed):
+`wrangler dev` reads local secrets and vars from a `.dev.vars` file at the repo root (git-ignored). Start from `.env.example` and use credentials for isolated local services. Do not copy production credentials into `.dev.vars`.
 
 ```bash
-cp .env .dev.vars
-# Fill in all values
+cp .env.example .dev.vars
+# Fill in isolated local service values
 ```
 
 ### 3. Run locally
@@ -343,9 +342,9 @@ Name resolution priority:
 
 ## Key Implementation Notes
 
-**Webhook deduplication** — the POST handler ACKs `200` immediately (via `c.executionCtx.waitUntil`) before processing so Meta never retries. Each message is also checked against `wa_user_message_id` to skip already-processed messages.
+**Webhook intake**: the handler verifies each webhook, persists normalized messages in `bot_inbox`, then acknowledges and queues the database IDs. Provider message IDs and a content fingerprint detect replays and conflicting identities.
 
-**Multi-transaction ordering** — transactions in a `CREATE_MULTIPLE` batch are inserted sequentially (not bulk) to guarantee distinct `created_at` timestamps. This ensures `.order('created_at')` always returns them in the original message order when looking up by `wa_bot_message_id`.
+**Multi-transaction receipts**: each committed message stores an immutable ordered mapping in `bot_batch_items`. The receipt item number remains stable after its transaction is deleted, so a later reply cannot target a different item.
 
 **Gemini action fallback** — when replying to a multi-transaction message, the router accepts both `EDIT_FROM_MULTIPLE`/`DELETE_FROM_MULTIPLE` and `EDIT_TRANSACTION`/`DELETE_TRANSACTION` as valid actions since Gemini is inconsistent with action naming.
 
@@ -383,11 +382,17 @@ Numeric JSON amounts retain their original token through `JSON.parse` reviver so
 
 Keep `DELETE_CONFIRMATIONS_ENABLED=false` until the catalog inspection, both migrations in `supabase/migrations`, and the disposable Supabase/Auth/PostgREST plus actual gateway confirmation checks have passed. Migration files are not authorization to apply them to production.
 
-`npm run test:db` uses a separately approved, initially empty disposable PostgreSQL database named with the `finance_phase1_test` prefix. Native PostgreSQL tests cover RPC authorization, atomic consumption, concurrent confirmations, and expiry after lock waits. They do not prove Supabase RPC exposure or provider reply IDs.
+The Phase 1 PostgreSQL suite requires an initially empty disposable database named with the `finance_phase1_test` prefix. Run it separately from Phase 2 because the database guards require different prefixes:
 
-Batch writes and account/invitation flows still contain multiple database operations. Phase 2 covers their durability. Bilingual categories, salary identity, and image parsing remain later phases.
+```bash
+npm exec vitest -- run --config vitest.integration.config.ts tests/integration/deleteConfirmation.db.test.ts
+```
 
-`/language` looks up the member by account and WhatsApp sender, then updates the existing row or inserts a new preference. Production has no unique constraint on that pair, so the command cannot use a composite-key upsert. Updating the preference preserves the member ID, linked user, role, and display name. Concurrent first-time membership creation remains part of Phase 2.
+The suite covers RPC authorization, atomic confirmation consumption, concurrent requests, and expiry after lock waits. It does not prove Supabase RPC exposure or provider reply IDs.
+
+Account, batch, and invitation changes use database transactions with persisted retry outcomes. Bilingual categories and image parsing remain later phases.
+
+`/language` looks up the member by account and WhatsApp sender, then updates the existing row or inserts a new preference. Production has no unique constraint on that pair, so the command cannot use a composite-key upsert. Updating the preference preserves the member ID, linked user, role, and display name. Phase 2 serializes first-time member creation through the account lock.
 
 ## Durable recording contracts
 
@@ -397,4 +402,28 @@ Receipt item numbers live in `bot_batch_items`. Deletion clears the transaction 
 
 Edits compare their frozen original financial fields before changing a row and preserve attribution. Description-only edits may retain an inactive historical category. Setup and language commands serialize membership changes through the account lock and do not require a unique account/WhatsApp-phone constraint.
 
-The opt-in Phase 2 database suite accepts only a loopback PostgreSQL URL whose database name begins with `finance_phase2_test`. Supply `FINANCE_TEST_DATABASE_URL` explicitly, with an initially empty disposable database; never use the application or production URL. Run `node node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts tests/integration/intake.db.test.ts tests/integration/botCommit.db.test.ts tests/integration/atomicRouting.db.test.ts`. The fixture contains synthetic accounts and no production credentials. These checks do not authorize deployment, live bot messages, or production migrations.
+The Phase 2 PostgreSQL suites accept only a loopback URL whose database name begins with `finance_phase2_test`. Set `FINANCE_TEST_DATABASE_URL` explicitly to an initially empty synthetic database. Select Phase 2 tests separately from the Phase 1 suite:
+
+```bash
+npm exec vitest -- run --config vitest.integration.config.ts \
+  tests/integration/atomicRouting.db.test.ts \
+  tests/integration/accountOperations.db.test.ts \
+  tests/integration/botCommit.db.test.ts \
+  tests/integration/export.db.test.ts \
+  tests/integration/fixtureSafety.db.test.ts \
+  tests/integration/intake.db.test.ts \
+  tests/integration/processing.db.test.ts \
+  tests/integration/reporting.db.test.ts
+```
+
+These checks use synthetic accounts and no provider credentials. They do not authorize deployment, live bot messages, or production migrations.
+
+WhatsApp send results use provider-specific codes, not HTTP status alone. Meta's documented error-code reference is <https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes/>. Fonnte's send API and response examples are at <https://docs.fonnte.com/api-send-message/>. The adapter retries only listed provider rejections that document non-acceptance; unknown responses and transport failures remain uncertain. A retry delay is accepted only from a valid `Retry-After` value between 1 and 3,600 seconds.
+
+Use `npm run recover:delivery -- <action> <outbound-uuid> [argument]`. Actions are `show`, `resume`, `bind-id <provider-message-id>`, `resend-uncertain --acknowledge-duplicate-risk`, and `resolve rejected|discard`. Supply credentials directly to the operator process. The tool does not load `.env`; uncertain sends stay held unless an operator binds a known provider ID or explicitly accepts duplicate-send risk.
+
+Verified webhooks persist normalized messages before acknowledging, then enqueue their database IDs. Queue consumers process one message at a time; the minute scheduler re-enqueues due inbox work, dispatches due outbound replies, and removes expired export snapshots. The Wrangler config declares `financebot-intake` and the cron binding. This does not create the remote queue or deploy the Worker; provision and production rollout remain separate authorized steps.
+
+Each dashboard export captures matching rows, category labels, exact amounts, and order for 15 minutes. The dashboard reads pages of at most 500 rows and returns a CSV only after validating every row. Description and category cells are escaped against spreadsheet formula execution. Exports above 99,999 rows or 32 MiB are rejected.
+
+Exact money values cross SQL and API boundaries as decimal strings. Dashboard summary fields `income`, `expense`, and `net`, category totals, monthly totals, and budget spending use strings. Business dates use `YYYY-MM-DD` calendar values in the `2000-01-01` through `2100-12-31` range; they are not parsed as UTC timestamps.

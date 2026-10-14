@@ -1,4 +1,6 @@
 import { supabase } from '../services/supabase';
+import { getFinanceBudgetSpending, cents, formatCents } from '../services/reporting';
+import { currentMonthRange } from '../utils/businessDate';
 import { sendWA } from '../services/whatsapp';
 import type { Account, IncomingMessage } from '../ai/types';
 import type { Lang } from '../utils/lang';
@@ -64,8 +66,9 @@ export function transactionReceipt(txn: CanonicalTxn, categories: CategoryRow[],
 }
 export async function deliverTransactionReceipt(rows: CanonicalTxn[], account: Account, msg: IncomingMessage, text: string): Promise<void> {
   try {
-    const id = await sendWA(msg.chatId, text);
-    if (typeof id !== 'string' || !id.trim()) throw new BotDeliveryError();
+    const outcome=await sendWA(msg.chatId,text);
+    if(outcome.kind!=='accepted')throw new BotDeliveryError();
+    const id=outcome.providerMessageId;
     const result = await supabase.from('transactions').update({ wa_bot_message_id: id })
       .eq('account_id', account.id).in('id', rows.map((row) => row.id)).select('id');
     if (result.error || !Array.isArray(result.data) || result.data.length !== rows.length ||
@@ -76,31 +79,29 @@ export async function deliverTransactionReceipt(rows: CanonicalTxn[], account: A
   }
 }
 export async function budgetWarnings(rows: CanonicalTxn[], categories: CategoryRow[], accountId: string, lang: Lang): Promise<string> {
-  // Preserve current monthly warning behavior. A warning-query failure does not undo or repeat a committed transaction.
+  // A warning-query failure does not undo or repeat a committed transaction.
   try {
-    const budgets = await supabase.from('budgets').select('category_id,amount').eq('account_id', accountId);
+    const budgets = await supabase.from('budgets').select('category_id,amount::text').eq('account_id', accountId);
     if (budgets.error || !Array.isArray(budgets.data)) throw new BotWriteError('dependency');
-    const ids = [...new Set(rows.filter((row) => row.type === 'expense' && row.category_id).map((row) => row.category_id!))];
+    const expenseIds = [...new Set(rows.filter((row) => row.type === 'expense' && row.category_id).map((row) => row.category_id!))];
+    const ids = expenseIds.filter((id) => budgets.data.some((budget) => budget.category_id === id));
+    if (!ids.length) return '';
+    const { from, to } = currentMonthRange();
+    const spending = await getFinanceBudgetSpending(accountId, from, to);
     const warnings: string[] = [];
-    const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-    const to = now.toISOString().split('T')[0];
     for (const id of ids) {
       const budget = budgets.data.find((row) => row.category_id === id);
       if (!budget) continue;
-      const amount = Number(budget.amount);
-      if (!Number.isFinite(amount) || amount <= 0) throw new BotWriteError('dependency');
-      const spend = await supabase.from('transactions').select('amount').eq('account_id', accountId)
-        .eq('category_id', id).eq('type', 'expense').gte('date', from).lte('date', to);
-      if (spend.error || !Array.isArray(spend.data)) throw new BotWriteError('dependency');
-      const total = spend.data.reduce((sum, row) => sum + Number(row.amount), 0);
-      if (!Number.isFinite(total)) throw new BotWriteError('dependency');
-      const pct = Math.round(total / amount * 100);
+      if (typeof budget.amount !== 'string') throw new BotWriteError('dependency');
+      const budgetCents = cents(budget.amount);
+      if (budgetCents <= 0n) throw new BotWriteError('dependency');
+      const totalCents = cents(spending.spendingByCategoryId[id] ?? '0.00');
+      const pct = ((totalCents * 100n + budgetCents / 2n) / budgetCents).toString();
       const name = categories.find((row) => row.id === id)?.name ?? t[lang].uncategorized;
-      if (total > amount) warnings.push(lang === 'id'
-        ? `⚠️ *Budget ${name} terlampaui!* Rp${formatIDR(total)} / Rp${formatIDR(amount)} (${pct}%)`
-        : `⚠️ *${name} budget exceeded!* Rp${formatIDR(total)} / Rp${formatIDR(amount)} (${pct}%)`);
-      else if (pct >= 80) warnings.push(`⚠️ Budget ${name}: Rp${formatIDR(total)} / Rp${formatIDR(amount)} (${pct}%)`);
+      if (totalCents > budgetCents) warnings.push(lang === 'id'
+        ? `⚠️ *Budget ${name} terlampaui!* Rp${formatIDR(formatCents(totalCents))} / Rp${formatIDR(budget.amount)} (${pct}%)`
+        : `⚠️ *${name} budget exceeded!* Rp${formatIDR(formatCents(totalCents))} / Rp${formatIDR(budget.amount)} (${pct}%)`);
+      else if (BigInt(pct) >= 80n) warnings.push(`⚠️ Budget ${name}: Rp${formatIDR(formatCents(totalCents))} / Rp${formatIDR(budget.amount)} (${pct}%)`);
     }
     return warnings.length ? '\n\n' + warnings.join('\n') : '';
   } catch {
