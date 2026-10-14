@@ -11,11 +11,12 @@ export function formatIDR(amount: number | string): string {
 // Format date for WA display based on language
 // 2026-03-27 → '27 Mar 2026' (id) or 'Mar 27, 2026' (en)
 export function formatDate(dateStr: string, lang: Lang = 'id'): string {
-  const d = new Date(dateStr + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00Z');
   return d.toLocaleDateString(lang === 'id' ? 'id-ID' : 'en-US', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
+    timeZone: 'UTC',
   });
 }
 

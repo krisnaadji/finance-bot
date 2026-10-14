@@ -1,4 +1,5 @@
 import { supabase } from '../services/supabase';
+import { businessDate, calendarMonth, currentMonthRange, shiftCivilDay } from '../utils/businessDate';
 
 export type SummaryPeriod =
   | 'this_month'
@@ -26,61 +27,27 @@ type SalaryRow = {
   categories?: unknown;
 };
 
-function toISODate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function parseISODate(dateStr: string): Date {
-  return new Date(dateStr + 'T00:00:00');
-}
-
 function resolveCalendarPeriod(period: string): SummaryPeriodResult {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-
+  const today = businessDate(now);
+  const [year, month] = today.split('-').map(Number);
   if (period === 'last_month') {
-    return {
-      ok: true,
-      from: toISODate(new Date(y, m - 1, 1)),
-      to: toISODate(new Date(y, m, 0)),
-      label: 'calendar',
-    };
+    return { ok: true, ...calendarMonth(year, month - 1), label: 'calendar' };
   }
-
   if (period === 'this_week') {
-    const day = now.getDay() || 7;
-    const mon = new Date(now);
-    mon.setDate(now.getDate() - day + 1);
-    return {
-      ok: true,
-      from: toISODate(mon),
-      to: toISODate(now),
-      label: 'calendar',
-    };
+    const weekday = new Date(today + 'T00:00:00Z').getUTCDay() || 7;
+    return { ok: true, from: shiftCivilDay(today, 1 - weekday), to: today, label: 'calendar' };
   }
-
-  return {
-    ok: true,
-    from: toISODate(new Date(y, m, 1)),
-    to: toISODate(now),
-    label: 'calendar',
-  };
+  return { ok: true, ...currentMonthRange(now), label: 'calendar' };
 }
 
 function monthBounds(month: number, year: number): { from: string; to: string } {
-  return {
-    from: toISODate(new Date(year, month - 1, 1)),
-    to: toISODate(new Date(year, month, 0)),
-  };
+  return calendarMonth(year, month);
 }
 
 function nextMonth(month: number, year: number): { month: number; year: number } {
-  const date = new Date(year, month, 1);
-  return { month: date.getMonth() + 1, year: date.getFullYear() };
+  const [nextYear, nextMonth] = calendarMonth(year, month + 1).from.split('-').map(Number);
+  return { month: nextMonth, year: nextYear };
 }
 
 function isGajiRow(row: SalaryRow): boolean {
@@ -133,9 +100,9 @@ export async function resolveSummaryPeriod(
     if (latest.error) return { ok: false, reason: 'query_failed' };
     if (!latest.rows.length) return { ok: false, reason: 'salary_not_found' };
 
-    const latestSalaryDate = parseISODate(String(latest.rows[0].date));
-    salaryMonth = latestSalaryDate.getMonth() + 1;
-    salaryYear = latestSalaryDate.getFullYear();
+    const [year, month] = String(latest.rows[0].date).split('-').map(Number);
+    salaryMonth = month;
+    salaryYear = year;
   }
 
   const currentBounds = monthBounds(salaryMonth, salaryYear);
@@ -158,21 +125,13 @@ export async function resolveSummaryPeriod(
 
   if (nextSalary.error) return { ok: false, reason: 'query_failed' };
 
-  const nextMarker = nextSalary.rows[0]?.date
-    ? parseISODate(String(nextSalary.rows[0].date))
-    : null;
-  const toDate = nextMarker
-    ? new Date(
-        nextMarker.getFullYear(),
-        nextMarker.getMonth(),
-        nextMarker.getDate() - 1,
-      )
-    : new Date();
+  const nextMarker = nextSalary.rows[0]?.date;
+  const to = nextMarker ? shiftCivilDay(String(nextMarker), -1) : businessDate(new Date());
 
   return {
     ok: true,
     from: String(currentSalary.rows[0].date),
-    to: toISODate(toDate),
+    to,
     label: 'salary_cycle',
   };
 }

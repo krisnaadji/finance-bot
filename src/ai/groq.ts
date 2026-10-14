@@ -10,6 +10,7 @@ export async function callGroq(
   lang: Lang,
   replyTxn?: TxnForBot,
   multiContext?: string,
+  referenceInstant = new Date(),
 ): Promise<unknown> {
   const apiKey = process.env.AI_API_KEY;
   const model = process.env.AI_MODEL || 'openai/gpt-oss-120b';
@@ -40,7 +41,7 @@ export async function callGroq(
       ].join('\n')
     : undefined;
 
-  const prompt = buildPrompt(message, lang, categories, replyContext, multiContext);
+  const prompt = buildPrompt(message, lang, categories, replyContext, multiContext, referenceInstant);
 
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',

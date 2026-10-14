@@ -10,6 +10,7 @@ export async function callGemini(
   lang: Lang,
   replyTxn?: TxnForBot,
   multiContext?: string,
+  referenceInstant = new Date(),
 ): Promise<unknown> {
   const apiKey = process.env.AI_API_KEY;
   const model = process.env.AI_MODEL || 'gemini-2.5-flash-lite';
@@ -40,7 +41,7 @@ export async function callGemini(
       ].join('\n')
     : undefined;
 
-  const prompt = buildPrompt(message, lang, categories, replyContext, multiContext);
+  const prompt = buildPrompt(message, lang, categories, replyContext, multiContext, referenceInstant);
 
   const url =
     'https://generativelanguage.googleapis.com/v1beta/models/' +

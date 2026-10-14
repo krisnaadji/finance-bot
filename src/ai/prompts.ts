@@ -1,8 +1,5 @@
-// IMPORTANT: This is the same buildPrompt function from test-gemini.ts.
-// Only difference: categories is a parameter (comes from Supabase),
-// not hardcoded. The replyContext parameter replaces replyTxn object
-// so this file has zero dependencies — no circular imports.
 import { Lang } from '../utils/lang';
+import { businessDate, shiftCivilDay } from '../utils/businessDate';
 
 export function buildPrompt(
   message: string,
@@ -10,9 +7,10 @@ export function buildPrompt(
   categories: { income: string[]; expense: string[] },
   replyContext?: string, // context for single-txn reply
   multiContext?: string, // numbered list for EDIT_FROM_MULTIPLE
+  referenceInstant = new Date(),
 ): string {
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+  const today = businessDate(referenceInstant);
+  const yesterday = shiftCivilDay(today, -1);
 
   const intro =
     lang === 'id'
