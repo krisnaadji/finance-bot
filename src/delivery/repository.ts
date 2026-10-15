@@ -7,6 +7,7 @@ import type { Gateway } from '../intake/types';
 export async function freezeReply(id:string,text:string):Promise<string>{
   const {data,error}=await supabase.rpc('freeze_bot_reply',{p_outbound_id:id,p_text:text});
   if(error)throw new Error('reply_freeze_unavailable');
+  if(data===true)return text;
   const row=await supabase.from('bot_outbound').select('text').eq('id',id).maybeSingle();
   if(row.error||typeof row.data?.text!=='string')throw new Error('reply_freeze_unavailable');
   return row.data.text;
