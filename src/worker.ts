@@ -104,10 +104,13 @@ app.post('/webhook', async (c) => {
 
 export const fetch = app.fetch.bind(app);
 export async function queue(batch: MessageBatch<{ inboxId: string }>): Promise<void> {
+  const backlogCount = batch.metadata?.metrics?.backlogCount ?? null;
   await Promise.all(batch.messages.map(async message => {
     try {
       if (!message.body || typeof message.body.inboxId !== 'string') throw new Error('invalid_queue_message');
-      await processInbox(message.body.inboxId);
+      const enqueuedAt = message.timestamp instanceof Date ? message.timestamp.getTime() : Number.NaN;
+      const queueWaitMs = Number.isFinite(enqueuedAt) ? Math.max(0, Date.now() - enqueuedAt) : null;
+      await processInbox(message.body.inboxId, { queueWaitMs, backlogCount });
       message.ack();
     } catch (error) {
       logger.error('queue', 'inbox_processing_failed', error);

@@ -2,14 +2,16 @@ import { supabase } from '../services/supabase';
 import { claimInbox, failInbox, renewInbox } from '../intake/repository';
 import type { InboxClaim } from '../intake/types';
 import { claimOutbound, freezeReply } from '../delivery/repository';
-import { dispatchClaim } from '../delivery/dispatch';
+import { dispatchClaim, type DispatchTiming } from '../delivery/dispatch';
 import { renderReply } from '../delivery/render';
+import { logger } from '../utils/logger';
 import { commitCommand, decodeCommitResult, saveCommand } from './commit';
 import { prepareMessage } from './prepare';
 import type { CommitResult } from './types';
-
 const HEARTBEAT_INTERVAL_MS = 15_000;
 type InboxHeartbeat = { assertHealthy(): void; stop(): Promise<void> };
+type QueueTiming = { queueWaitMs: number | null; backlogCount: number | null };
+const elapsedMs = (start: number): number => Math.round((performance.now() - start) * 10) / 10;
 
 async function storedOutcome(id: string): Promise<CommitResult | null> {
   const { data, error } = await supabase.from('bot_inbox').select('outcome').eq('id', id).maybeSingle();
@@ -52,18 +54,21 @@ async function renewBeforeWrite(claim: InboxClaim, beat: InboxHeartbeat): Promis
   beat.assertHealthy();
 }
 
-async function dispatchOutbound(id: string): Promise<void> {
+async function dispatchOutbound(id: string, timings?: DispatchTiming[]): Promise<void> {
   const { data, error } = await supabase.from('bot_outbound').select('text,reply_payload').eq('id', id).maybeSingle();
   if (error || !data || !(data.text === null || typeof data.text === 'string')) {
     throw new Error('outbound_load_unavailable');
   }
   if (data.text === null) await freezeReply(id, renderReply(data.reply_payload));
   const claim = await claimOutbound(id);
-  if (claim) await dispatchClaim(claim);
+  if (claim) {
+    if (timings) await dispatchClaim(claim, timing => timings.push(timing));
+    else await dispatchClaim(claim);
+  }
 }
 
-async function dispatchOutbounds(ids: string[]): Promise<void> {
-  for (const id of ids) await dispatchOutbound(id);
+async function dispatchOutbounds(ids: string[], timings?: DispatchTiming[]): Promise<void> {
+  for (const id of ids) await dispatchOutbound(id, timings);
 }
 
 async function persistFailureOrReplay(claim: InboxClaim, error: unknown): Promise<void> {
@@ -82,7 +87,9 @@ async function persistFailureOrReplay(claim: InboxClaim, error: unknown): Promis
   throw error;
 }
 
-export async function processInbox(id: string): Promise<void> {
+export async function processInbox(id: string, queueTiming?: QueueTiming): Promise<void> {
+  const totalStart = performance.now();
+  const claimStart = performance.now();
   const prior = await storedOutcome(id);
   if (prior) {
     await dispatchOutbounds(prior.outboundIds);
@@ -90,21 +97,31 @@ export async function processInbox(id: string): Promise<void> {
   }
 
   const claim = await claimInbox(id);
+  const claimMs = elapsedMs(claimStart);
   if (!claim) return;
 
   const beat = heartbeat(claim);
   let result: CommitResult | null = null;
   let failed = false;
   let failure: unknown;
+  let prepareMs = 0;
+  let commandWriteMs = 0;
+  let commitMs = 0;
   try {
+    const prepareStart = performance.now();
     const command = await prepareMessage(claim);
+    prepareMs = elapsedMs(prepareStart);
     beat.assertHealthy();
+    const writeStart = performance.now();
     if (claim.command === null) {
       await renewBeforeWrite(claim, beat);
       await saveCommand(claim, command);
     }
     await renewBeforeWrite(claim, beat);
+    commandWriteMs = elapsedMs(writeStart);
+    const commitStart = performance.now();
     result = await commitCommand(claim, command);
+    commitMs = elapsedMs(commitStart);
   } catch (error) {
     failure = error;
     failed = true;
@@ -124,5 +141,21 @@ export async function processInbox(id: string): Promise<void> {
     return;
   }
   if (result === null) throw new Error('command_outcome_unavailable');
-  await dispatchOutbounds(result.outboundIds);
+  const dispatchTimings: DispatchTiming[] | undefined = queueTiming ? [] : undefined;
+  const outboundStart = performance.now();
+  await dispatchOutbounds(result.outboundIds, dispatchTimings);
+  if (queueTiming) {
+    logger.info('latency', '[BOTLATENCY-P2TEMP] reply_timing', {
+      queueWaitMs: queueTiming.queueWaitMs,
+      queueBacklogCount: queueTiming.backlogCount,
+      claimMs,
+      prepareMs,
+      commandWriteMs,
+      commitMs,
+      outboundMs: elapsedMs(outboundStart),
+      providerTimings: dispatchTimings,
+      totalMs: elapsedMs(totalStart),
+      outboundCount: result.outboundIds.length,
+    });
+  }
 }
