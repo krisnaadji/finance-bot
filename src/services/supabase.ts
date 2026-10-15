@@ -1,5 +1,36 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+import { logger } from '../utils/logger';
+
+const timedFetch: typeof fetch = async (input, init) => {
+  const request = input instanceof Request ? input : undefined;
+  const method = init?.method ?? request?.method ?? 'GET';
+  const start = performance.now();
+  let resource = 'other';
+  try {
+    const segments = new URL(request?.url ?? input.toString()).pathname.split('/').filter(Boolean);
+    const restIndex = segments.indexOf('rest');
+    if (restIndex >= 0 && segments[restIndex + 1] === 'v1') {
+      const route = segments[restIndex + 2];
+      resource = route === 'rpc' ? `rpc/${segments[restIndex + 3] ?? 'unknown'}` : route ?? 'unknown';
+    }
+  } catch { resource = 'other'; }
+  try {
+    const response = await fetch(input, init);
+    logger.info('latency', '[BOTLATENCY-P2TEMP] supabase_request', {
+      method, resource, status: response.status,
+      elapsedMs: Math.round((performance.now() - start) * 10) / 10,
+    });
+    return response;
+  } catch (error) {
+    logger.info('latency', '[BOTLATENCY-P2TEMP] supabase_request', {
+      method, resource, status: null, failed: true,
+      elapsedMs: Math.round((performance.now() - start) * 10) / 10,
+    });
+    throw error;
+  }
+};
+
 let client: SupabaseClient | null = null;
 
 function getClient(): SupabaseClient {
@@ -8,7 +39,7 @@ function getClient(): SupabaseClient {
   const key = process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key)
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY must be set');
-  client = createClient(url, key);
+  client = createClient(url, key, { global: { fetch: timedFetch } });
   return client;
 }
 
