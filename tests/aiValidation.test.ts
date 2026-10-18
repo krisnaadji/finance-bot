@@ -25,8 +25,8 @@ describe('AI command validation', () => {
     expect(() => validateAIResponse({ action: 'EDIT_TRANSACTION', payload })).toThrow(InvalidAICommand);
   });
   it('requires category name and normalized exact category type', () => {
-    expect(validateAIResponse({ action: 'ADD_CATEGORY', payload: { category_name: ' Tips ', category_type: 'Pemasukan' } }).payload)
-      .toEqual({ category_name: 'Tips', category_type: 'income' });
+    expect(validateAIResponse({action:'ADD_CATEGORY',payload:{category_name:' Tips ',category_type:'Pemasukan',category_language:'en'}}).payload)
+      .toEqual({category_name:'Tips',category_type:'income',category_language:'en'});
     for (const payload of [{ category_name: ' ' }, { category_name: 'Tips', category_type: 'transfer' }, { category_name: 9, category_type: 'income' }]) {
       expect(() => validateAIResponse({ action: 'ADD_CATEGORY', payload })).toThrow(InvalidAICommand);
     }

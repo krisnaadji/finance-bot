@@ -7,7 +7,8 @@ function identifier(value: string): string {
 const tables = new Set(['accounts','members','categories','transactions','pending_actions','link_codes','bot_inbox','bot_outbound','bot_help_context','budgets']);
 const functions = new Set(['ingest_bot_messages','claim_bot_message','renew_bot_claim','save_bot_command','fail_bot_message',
   'commit_bot_command','lookup_bot_receipt','freeze_bot_reply','claim_bot_outbound','settle_bot_outbound','recover_bot_outbound','load_bot_help_context',
-  'cleanup_expired_finance_exports']);
+  'cleanup_expired_finance_exports','claim_bot_recovery_work','finance_summary','finance_budget_spending','finance_transaction_view',
+  'start_finance_export','read_finance_export','release_finance_export','reserve_category_translation']);
 
 class ReadQuery implements PromiseLike<{data:Record<string,unknown>[]|null;error:unknown}> {
   private values: unknown[] = [];
@@ -15,10 +16,15 @@ class ReadQuery implements PromiseLike<{data:Record<string,unknown>[]|null;error
   private ordering: string[] = [];
   private count: number | null = null;
   private joinCategories = false;
+  private innerCategories = false;
   constructor(private table: string) {}
-  select(columns: string) { this.joinCategories = columns.includes('categories(') || columns.includes('categories!inner('); return this; }
+  select(columns: string) {
+    this.joinCategories = /categories(?:!inner)?\(/.test(columns);
+    this.innerCategories = columns.includes('categories!inner(');
+    return this;
+  }
   private column(name: string) {
-    return name === 'categories.name' ? 'c.name' : 't.' + identifier(name);
+    return name.startsWith('categories.') ? 'c.' + identifier(name.slice('categories.'.length)) : 't.' + identifier(name);
   }
   private filter(column: string, operator: string, value: unknown) {
     this.values.push(value);
@@ -42,8 +48,15 @@ class ReadQuery implements PromiseLike<{data:Record<string,unknown>[]|null;error
   }
   private async execute() {
     try {
-      const projection = this.joinCategories ? ", case when c.id is null then null else jsonb_build_object('name',c.name) end as categories" : '';
-      const join = this.joinCategories ? ' left join public.categories c on c.id=t.category_id' : '';
+      const categoryColumns = await sql<{present:boolean}>(`select exists(select 1 from information_schema.columns
+        where table_schema='public' and table_name='categories' and column_name='name_id') as present`);
+      const bilingual = categoryColumns[0].present;
+      const projection = this.joinCategories ? (bilingual
+        ? ', bot_private.category_json(c) as categories, bot_private.category_json(p) as parent'
+        : ", case when c.id is null then null else jsonb_build_object('name',c.name) end as categories") : '';
+      const join = this.joinCategories ? `${this.innerCategories ? ' join' : ' left join'} public.categories c
+        on c.id=t.category_id and c.account_id=t.account_id and c.type=t.type${bilingual
+          ? ' left join public.categories p on p.id=c.parent_id and p.account_id=c.account_id and p.type=c.type and p.parent_id is null' : ''}` : '';
       const where = this.conditions.length ? ' where '+this.conditions.join(' and ') : '';
       const order = this.ordering.length ? ' order by '+this.ordering.join(',') : '';
       const limit = this.count === null ? '' : ' limit '+this.count;

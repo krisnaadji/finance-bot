@@ -86,6 +86,8 @@ function accountId(result: RpcResult): string {
 it('returns the original account for an identical operation and conflicts on changed payload', async () => {
   const created = await createAccount();
   expect(created.result.code).toBe('accepted');
+  const seeded = await sql<{id:string}>('select id from public.categories where account_id=$1 order by id', [accountId(created.result)]);
+  expect(seeded.length).toBeGreaterThan(0);
   const [retry] = await sql<{ value: RpcResult }>(
     'select public.create_finance_account($1,$2,$3,$4,$5) as value',
     [created.userId, created.operationId, '  Household  ', 'group', '  Account owner  '],
@@ -103,11 +105,7 @@ it('returns the original account for an identical operation and conflicts on cha
     [created.userId, created.operationId, 'Different household', 'group', 'Account owner'],
   );
   expect(changed.value).toEqual({ code: 'conflict' });
-  const seeded = await sql<{ count: number }>(
-    `select count(*)::int as count from public.categories where account_id=$1 and name='Fixture seeded category'`,
-    [accountId(created.result)],
-  );
-  expect(seeded[0].count).toBe(1);
+  expect(await sql('select id from public.categories where account_id=$1 order by id', [accountId(created.result)])).toEqual(seeded);
 });
 it('preserves account creation when the owner has no display name', async () => {
   const created = await createAccount(randomUUID(), randomUUID(), 'Unnamed owner', null);

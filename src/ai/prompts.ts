@@ -1,97 +1,34 @@
-import { Lang } from '../utils/lang';
+import type { Lang } from '../utils/lang';
 import { businessDate, shiftCivilDay } from '../utils/businessDate';
+import { categoryPath, type Category } from '../categories';
 
-export function buildPrompt(
-  message: string,
-  lang: Lang,
-  categories: { income: string[]; expense: string[] },
-  replyContext?: string, // context for single-txn reply
-  multiContext?: string, // numbered list for EDIT_FROM_MULTIPLE
-  referenceInstant = new Date(),
-): string {
+export function buildPrompt(message: string, lang: Lang, categories: readonly Category[], replyContext?: string, multiContext?: string, referenceInstant = new Date()): string {
   const today = businessDate(referenceInstant);
-  const yesterday = shiftCivilDay(today, -1);
-
-  const intro =
-    lang === 'id'
-      ? 'Kamu adalah asisten keuangan pribadi. Tulis field reply dalam bahasa Indonesia.'
-      : 'You are a personal finance assistant. Write the reply field in English.';
-
-  const rules =
-    lang === 'id'
-      ? [
-          'Pahami bahasa Indonesia tidak baku dan slang',
-          'k/rb = ribu, jt = juta. Contoh: 35k=35000, 5jt=5000000, 150rb=150000',
-          'kemarin = ' +
-            yesterday +
-            ', tadi = earlier today, minggu lalu = last week',
-          'Jika tidak ada tanggal eksplisit gunakan hari ini: ' + today,
-        ]
-      : [
-          'Understand both English and informal Indonesian input',
-          'k/rb = thousand, jt = million. Example: 35k=35000, 5jt=5000000',
-          'kemarin = ' + yesterday + ', tadi = earlier today',
-          'If no date mentioned use today: ' + today,
-        ];
-
+  const examples: [string,string][] = [
+    ['beli makanan 30rb','expense.food'],['makan di warteg 30rb','expense.food.dining_out'],
+    ['belanja sayur telur 75k','expense.food.groceries'],['pesen makan gofood 45rb','expense.food.delivery'],
+    ['ngopi 22k','expense.food.snacks_coffee'],['bayar parkir 5rb','expense.transport.parking_tolls'],
+    ['bensin 100rb','expense.transport.fuel'],['bayar kos 1.5jt','expense.housing.rent'],
+    ['beli obat 30k','expense.health.medicine'],['gajian masuk 8jt','salary'],['bonus kantor masuk 2jt','income.bonus'],
+  ];
   return [
-    intro,
-    '',
-    replyContext ?? '',
-    multiContext
-      ? 'These transactions were recorded together:\n' +
-        multiContext +
-        '\nUser wants to edit one of them.'
-      : '',
-    'Message: ' + message,
-    'Today: ' + today,
-    '',
-    'Available income categories: ' + categories.income.join(', '),
-    'Available expense categories: ' + categories.expense.join(', '),
-    '',
-    'Examples (Indonesian → correct JSON):',
-    '- "makan siang 25k" → {"action":"CREATE_TRANSACTION","payload":{"amount":25000,"type":"expense","category":"Kebutuhan Pokok","description":"makan siang","date":"' +
-      today +
-      '"}}',
-    '- "gojek 15rb" → {"action":"CREATE_TRANSACTION","payload":{"amount":15000,"type":"expense","category":"Transportasi","description":"gojek","date":"' +
-      today +
-      '"}}',
-    '- "gaji bulan ini 5jt" → {"action":"CREATE_TRANSACTION","payload":{"amount":5000000,"type":"income","category":"Gaji","description":"gaji bulan ini","date":"' +
-      today +
-      '"}}',
-    '- "beli obat 30k" → {"action":"CREATE_TRANSACTION","payload":{"amount":30000,"type":"expense","category":"Kesehatan","description":"beli obat","date":"' +
-      today +
-      '"}}',
-    '- "bayar listrik 200k" → {"action":"CREATE_TRANSACTION","payload":{"amount":200000,"type":"expense","category":"Tagihan","description":"bayar listrik","date":"' +
-      today +
-      '"}}',
-    '- "rekap gaji" → {"action":"GET_SUMMARY","payload":{"period":"salary_cycle"}}',
-    '- "rekap gaji februari 2026" → {"action":"GET_SUMMARY","payload":{"period":"salary_cycle","salary_month":2,"salary_year":2026}}',
-    '- "ringkasan sejak gaji" → {"action":"GET_SUMMARY","payload":{"period":"salary_cycle"}}',
-    '- "summary since salary april 2025" → {"action":"GET_SUMMARY","payload":{"period":"salary_cycle","salary_month":4,"salary_year":2025}}',
-    '',
-    'Return ONLY valid JSON. No markdown, no extra text.',
-    '{',
-    '  action: CREATE_TRANSACTION | CREATE_MULTIPLE | EDIT_FROM_MULTIPLE',
-    '        | EDIT_TRANSACTION | DELETE_TRANSACTION',
-    '        | GET_SUMMARY | GET_CATEGORIES | ADD_CATEGORY | CHITCHAT | UNKNOWN,',
-    '  payload: { amount, type, category, description, date, selection_index, period, salary_month, salary_year },',
-    '  transactions: [ ...payloads ],  // CREATE_MULTIPLE only',
-    '}',
-    '',
-    'Rules:',
-    ...rules.map((r: string) => '- ' + r),
-    '- type field MUST be "income" or "expense" (English only, never Indonesian)',
-    '- Single transaction → CREATE_TRANSACTION with payload',
-    '- Multiple transactions in one message → CREATE_MULTIPLE with transactions array',
-    '- Summary since salary / rekap gaji → GET_SUMMARY with payload.period="salary_cycle"',
-    '- If salary summary includes month/year, set payload.salary_month (1-12) and payload.salary_year (4 digits)',
-    '- If multiContext present → user editing one transaction → EDIT_FROM_MULTIPLE',
-    '  set selection_index (1-based) and include only changed fields in payload',
-    '- If multiContext present and user wants to DELETE: DELETE_FROM_MULTIPLE with selection_index only',
-    '- Pick closest matching category from list; do not invent new ones',
-    '- For CHITCHAT/UNKNOWN: empty payload, write friendly reply field',
-  ]
-    .filter(Boolean)
-    .join('\n');
+    `You are a finance assistant. Write reply in ${lang === 'id' ? 'Indonesian' : 'English'}.`,
+    replyContext ?? '', multiContext ? `Recorded batch:\n${multiContext}\nSelect the original 1-based ordinal for edits/deletes.` : '',
+    `Message: ${message}`, `Today (Asia/Jakarta): ${today}; kemarin/yesterday: ${shiftCivilDay(today,-1)}`,
+    'Eligible account categories (IDs are identities; labels and paths are presentation only):',
+    ...categories.map(c => JSON.stringify({id:c.id,type:c.type,code:c.code,parent_id:c.parent_id,path_id:categoryPath(c,categories,'id'),path_en:categoryPath(c,categories,'en')})),
+    'Examples (use only the actual ID shown):',
+    ...examples.flatMap(([input,code]) => { const c=categories.find(row=>row.code===code); return c ? [`${JSON.stringify(input)} => category_id=${JSON.stringify(c.id)}`] : []; }),
+    'Return ONLY JSON: {action,payload,transactions?,selection_index?,reply?}.',
+    'Actions: CREATE_TRANSACTION, CREATE_MULTIPLE, EDIT_TRANSACTION, EDIT_FROM_MULTIPLE, DELETE_TRANSACTION, DELETE_FROM_MULTIPLE, GET_SUMMARY, GET_CATEGORIES, ADD_CATEGORY, CHITCHAT, UNKNOWN.',
+    'Transaction payload keys: amount,type,category_id,description,date,selection_index. amount must be an exact decimal string, type income|expense, date YYYY-MM-DD.',
+    'Understand Indonesian slang and mixed English: k/rb=ribu/thousand, jt=juta/million; 35k=35000, 1.5jt=1500000. warteg/makan di luar=dining out; sayur/telur/bahan masak=groceries; gofood/grabfood/shopeefood=food delivery; ngopi/jajan=snacks & coffee; bensin/BBM=fuel; kos/kontrakan=rent; gajian=regular salary, bonus/THR=bonus, never regular salary.',
+    'One classification request selects both parent and optional child. Use a child only when supported by the message. beli makanan selects Food & Drinks directly, not an invented detail. If no parent can be established use matching expense.other/income.other ID or omit category_id. Never invent an ID or classify by a label.',
+    'Multiple attributed expenses (lunch 35k sama kopi 15k) => CREATE_MULTIPLE, separate rows with independent amounts/descriptions/category_id. Preserve existing income/expense treatment of top-ups; do not invent transfers.',
+    'No explicit date => today. Edits include only changed fields; omitted category_id preserves the old reference. Do not ask for optional subcategory detail.',
+    'Reply context => only EDIT_TRANSACTION or DELETE_TRANSACTION; batch => EDIT_FROM_MULTIPLE or DELETE_FROM_MULTIPLE with original selection_index.',
+    'GET_SUMMARY payload: period (this_month|salary_cycle), optional salary_month 1-12 and salary_year. rekap gaji februari 2026 => salary_cycle,2,2026.',
+    'ADD_CATEGORY payload: category_name (original label), category_type income|expense, category_language id|en, optional parent_category_id (eligible root ID), optional translated_name (explicit user translation takes precedence). Missing parent creates a root. Never guess an ambiguous parent. Preserve original language; translation is optional and cannot block saving.',
+    'CHITCHAT/UNKNOWN => empty payload and friendly reply.',
+  ].filter(Boolean).join('\n');
 }

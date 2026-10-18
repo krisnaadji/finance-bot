@@ -6,6 +6,7 @@ import { AIResponse, Account, IncomingMessage } from '../ai/types';
 import { resolveSummaryPeriod } from './summaryPeriod';
 import { BotWriteError } from './transactionData';
 import { t } from '../i18n/bot';
+import { categoryLabel } from '../categories';
 
 export async function getSummary(
   ai: AIResponse,
@@ -27,7 +28,7 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
     if (periodResult.reason === 'query_failed') throw new BotWriteError('dependency');
     const reply = lang === 'id'
       ? 'Belum ada pemasukan kategori *Gaji*. Catat gaji dulu, lalu coba */rekap gaji*.'
-      : 'No income transaction categorized as *Gaji* was found. Record salary first, then try */summary salary*.';
+      : 'No regular salary transaction was found. Record salary first, then try */summary salary*.';
     return reply;
   }
 
@@ -43,7 +44,7 @@ export async function summaryReply(ai: AIResponse, account: Account, lang: Lang,
   const net = cents(report.net);
   const topCategories = report.categories
     .map((category) => ({
-      name: category.id === null ? t[lang].uncategorized : category.name,
+      name: category.id === null ? t[lang].uncategorized : categoryLabel(category,lang),
       amount: cents(category.amount),
     }))
     .sort((a, b) => a.amount > b.amount ? -1 : a.amount < b.amount ? 1 : 0)

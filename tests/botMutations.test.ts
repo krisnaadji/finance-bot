@@ -20,7 +20,7 @@ import { t } from '../src/i18n/bot';
 let db: SecurityDb;
 let account: Account;
 const msg: IncomingMessage = { messageId: 'incoming-1', chatId: 'test-group', rawFrom: 'requester-A', text: 'test input', repliedToId: null };
-const payload = { amount: '35.50', type: 'expense' as const, date: '2026-10-12', description: 'Lunch', category: 'Food' };
+const payload = { amount: '35.50', type: 'expense' as const, date: '2026-10-12', description: 'Lunch', category_id: expenseId };
 beforeEach(() => { db = seedSecurityDb(); state.db = db; account = db.tables.accounts[0] as unknown as Account; state.sendWA.mockReset().mockResolvedValue(accepted('new-receipt')); });
 it.each(['amount', 'type', 'date'])('single/batch invalid %s causes no financial write', async (key) => {
   const bad: Record<string, unknown> = { ...payload }; delete bad[key];
@@ -28,14 +28,13 @@ it.each(['amount', 'type', 'date'])('single/batch invalid %s causes no financial
   await expect(createMultiple({ action: 'CREATE_MULTIPLE', payload: {}, transactions: [payload, bad] } as AIResponse, account, msg, 'en')).rejects.toBeInstanceOf(InvalidAICommand);
   expect(db.tables.transactions).toHaveLength(1); expect(state.sendWA).not.toHaveBeenCalled(); expect(db.writes).toEqual([]);
 });
-it.each(['Old food', 'Tips'])('rejects selecting inactive/incompatible category %s', async (category) => {
-  await expect(createTxn({ action: 'CREATE_TRANSACTION', payload: { ...payload, category } }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
+it.each([inactiveId,incomeId])('rejects selecting inactive/incompatible ID %s', async (category_id) => {
+  await expect(createTxn({action:'CREATE_TRANSACTION',payload:{...payload,category_id}},account,msg,'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(db.tables.transactions).toHaveLength(1); expect(state.sendWA).not.toHaveBeenCalled();
 });
-it.each(['Foreign food', 'Unknown', 'Fo%'])('unresolved %s remains uncategorized without inventing receipt category', async (category) => {
-  await createTxn({ action: 'CREATE_TRANSACTION', payload: { ...payload, category } }, account, msg, 'en');
-  const saved = db.tables.transactions[1]; expect(saved.account_id).toBe(accountId); expect(saved.category_id).toBeNull();
-  const receipt = state.sendWA.mock.calls[0][1]; expect(receipt).toContain(t.en.uncategorized); expect(receipt).not.toContain(category);
+it.each(['20000000-0000-4000-8000-000000000099','20000000-0000-4000-8000-000000000004'])('rejects unknown/foreign ID %s instead of Other', async (category_id) => {
+  await expect(createTxn({action:'CREATE_TRANSACTION',payload:{...payload,category_id}},account,msg,'en')).rejects.toBeInstanceOf(BotWriteError);
+  expect(db.tables.transactions).toHaveLength(1); expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('success reflects persisted exact amount, category and attribution', async () => {
   await createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en');
@@ -61,7 +60,7 @@ it('description edit preserves historical inactive category; reselection does no
   await editTxn({ action: 'EDIT_TRANSACTION', payload: { description: 'History corrected' } }, txnId, account, msg, 'en');
   expect(db.tables.transactions[0]).toMatchObject({ description: 'History corrected', category_id: inactiveId, edited_by_name: 'A' });
   expect(state.sendWA.mock.calls[0][1]).toContain('Old food'); state.sendWA.mockClear();
-  await expect(editTxn({ action: 'EDIT_TRANSACTION', payload: { category: 'Old food' } }, txnId, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
+  await expect(editTxn({ action: 'EDIT_TRANSACTION', payload: { category_id: inactiveId } }, txnId, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(state.sendWA).not.toHaveBeenCalled();
 });
 it.each([false, true])('failed/zero-row edit never sends success (zero=%s)', async (zero) => {
@@ -72,12 +71,12 @@ it.each([false, true])('failed/zero-row edit never sends success (zero=%s)', asy
 });
 it.each(['read', 'insert'] as const)('category %s failure never claims success', async (mode) => {
   db.failures.push({ table: 'categories', mode });
-  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
+  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense', category_language:'en' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(db.tables.categories).toHaveLength(4); expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('category zero-row insert is not success', async () => {
   db.failures.push({ table: 'categories', mode: 'insert', zero: true });
-  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
+  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense', category_language:'en' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('batch rollback is checked; a failed compensation reports persisted records', async () => {
@@ -102,15 +101,14 @@ it.each([false, true])('single failed/zero-row insert never sends a success rece
 });
 it('missing optional description stays empty while required create fields stay explicit', async () => {
   await createTxn({ action: 'CREATE_TRANSACTION', payload: { amount: '12.5', type: 'income', date: '2024-02-29' } }, account, msg, 'en');
-  expect(db.tables.transactions[1]).toMatchObject({ amount: '12.50', type: 'income', date: '2024-02-29', description: '', category_id: null });
+  expect(db.tables.transactions[1]).toMatchObject({amount:'12.50',type:'income',date:'2024-02-29',description:'',category_id:incomeId});
   expect(state.sendWA.mock.calls[0][1]).toContain('+Rp12,50');
-  expect(state.sendWA.mock.calls[0][1]).toContain(t.en.uncategorized);
+  expect(state.sendWA.mock.calls[0][1]).toContain('Tips');
 });
-it('ambiguous case-insensitive category names fail closed before insertion', async () => {
-  db.tables.categories.push({ ...db.tables.categories[0], id: '20000000-0000-4000-8000-000000000005', name: ' food ' });
-  await expect(createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
-  expect(db.tables.transactions).toHaveLength(1);
-  expect(state.sendWA).not.toHaveBeenCalled();
+it('duplicate presentation labels do not make exact ID selection ambiguous', async () => {
+  db.tables.categories.push({...db.tables.categories[0],id:'20000000-0000-4000-8000-000000000005'});
+  await createTxn({action:'CREATE_TRANSACTION',payload},account,msg,'en');
+  expect(db.tables.transactions[1].category_id).toBe(expenseId);
 });
 it('member attribution read outage prevents an unverified financial write', async () => {
   db.failures.push({ table: 'members', mode: 'read' });
@@ -126,13 +124,13 @@ it('foreign transaction cannot be edited through a local account', async () => {
   expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('type/category edit validates the final merged state and uses saved income category', async () => {
-  await editTxn({ action: 'EDIT_TRANSACTION', payload: { type: 'income', category: 'Tips', amount: '12.5' } }, txnId, account, msg, 'en');
+  await editTxn({ action: 'EDIT_TRANSACTION', payload: { type: 'income', category_id: incomeId, amount: '12.5' } }, txnId, account, msg, 'en');
   expect(db.tables.transactions[0]).toMatchObject({ type: 'income', amount: '12.50', category_id: incomeId, edited_by_name: 'A' });
   expect(state.sendWA.mock.calls[0][1]).toContain('+Rp12,50');
   expect(state.sendWA.mock.calls[0][1]).toContain('Tips');
 });
 it('explicit null category removes the stored category and renders uncategorized', async () => {
-  await editTxn({ action: 'EDIT_TRANSACTION', payload: { category: null } }, txnId, account, msg, 'en');
+  await editTxn({ action: 'EDIT_TRANSACTION', payload: { category_id: null } }, txnId, account, msg, 'en');
   expect(db.tables.transactions[0].category_id).toBeNull();
   expect(state.sendWA.mock.calls[0][1]).toContain(t.en.uncategorized);
   expect(state.sendWA.mock.calls[0][1]).not.toContain('Food');
@@ -159,24 +157,44 @@ it('budget lookup outage appends a warning limitation to an honest committed rec
   expect(state.sendWA.mock.calls[0][1]).toContain(t.en.budgetWarningUnavailable);
 });
 it('a category insert sends a receipt from the saved name/type', async () => {
-  await addCategory({ action: 'ADD_CATEGORY', payload: { category_name: ' Travel ', category_type: 'expense' } }, account, msg, 'en');
-  expect(db.tables.categories.at(-1)).toMatchObject({ account_id: accountId, name: 'Travel', type: 'expense', is_custom: true, is_active: true });
+  await addCategory({action:'ADD_CATEGORY',payload:{category_name:' Travel ',category_type:'expense',category_language:'en'}},account,msg,'en');
+  expect(db.tables.categories.at(-1)).toMatchObject({account_id:accountId,name_en:'Travel',name_id:null,type:'expense',is_custom:true,is_active:true});
   expect(state.sendWA.mock.calls[0][1]).toBe(t.en.categoryAdded('Travel', 'expense'));
 });
 it('duplicate category is a conflict rather than an insertion or successful receipt', async () => {
-  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: ' food ', category_type: 'expense' } }, account, msg, 'en')).rejects.toMatchObject({ kind: 'conflict' });
+  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: ' food ', category_type: 'expense', category_language:'en' } }, account, msg, 'en')).rejects.toMatchObject({ kind: 'conflict' });
   expect(db.tables.categories).toHaveLength(4);
   expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('category post-commit send failure is observable without repeating the save', async () => {
   state.sendWA.mockResolvedValueOnce({ kind: 'uncertain', code: 'transport_unknown' });
-  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
-  expect(db.tables.categories.at(-1)?.name).toBe('Travel');
+  await expect(addCategory({ action: 'ADD_CATEGORY', payload: { category_name: 'Travel', category_type: 'expense', category_language:'en' } }, account, msg, 'en')).rejects.toBeInstanceOf(BotDeliveryError);
+  expect(db.tables.categories.at(-1)?.name_en).toBe('Travel');
   expect(db.writes.filter((row) => row.table === 'categories' && row.mode === 'insert')).toHaveLength(1);
+});
+
+it('creates an untranslated child under the exact selected root and renders its bilingual path',async()=>{
+  await addCategory({action:'ADD_CATEGORY',payload:{category_name:'Warung',category_type:'expense',category_language:'id',parent_category_id:expenseId}},account,msg,'en');
+  expect(db.tables.categories.at(-1)).toMatchObject({parent_id:expenseId,name_id:'Warung',name_en:null,type:'expense'});
+  expect(state.sendWA.mock.calls[0][1]).toContain('Food / Warung');
+});
+it('description-only edits retain an inactive historical child and show its localized root path',async()=>{
+  db.tables.categories.find(row=>row.id===inactiveId)!.parent_id=expenseId;
+  db.tables.transactions[0].category_id=inactiveId;
+  await editTxn({action:'EDIT_TRANSACTION',payload:{description:'Corrected historical meal'}},txnId,account,msg,'en');
+  expect(db.tables.transactions[0]).toMatchObject({category_id:inactiveId,description:'Corrected historical meal',edited_by_name:'A'});
+  expect(state.sendWA.mock.calls[0][1]).toContain('Food / Old food');
+});
+it('an inactive root prevents recording under an otherwise active child without any write',async()=>{
+  const childId='20000000-0000-4000-8000-000000000011';
+  db.tables.categories.push({...db.tables.categories[0],id:childId,parent_id:inactiveId,code:null});
+  await expect(createTxn({action:'CREATE_TRANSACTION',payload:{...payload,category_id:childId}},account,msg,'en')).rejects.toMatchObject({kind:'invalid'});
+  expect(db.writes).toEqual([]);
+  expect(state.sendWA).not.toHaveBeenCalled();
 });
 it('all batch category choices validate before the first financial insert', async () => {
   await expect(createMultiple({ action: 'CREATE_MULTIPLE', payload: {},
-    transactions: [payload, { ...payload, category: 'Old food' }] }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
+    transactions: [payload, { ...payload, category_id: inactiveId }] }, account, msg, 'en')).rejects.toBeInstanceOf(BotWriteError);
   expect(db.tables.transactions).toHaveLength(1);
   expect(db.writes).toEqual([]);
   expect(state.sendWA).not.toHaveBeenCalled();
@@ -184,7 +202,7 @@ it('all batch category choices validate before the first financial insert', asyn
 it('batch success formats an exact decimal net total and binds all stored rows only', async () => {
   await createMultiple({ action: 'CREATE_MULTIPLE', payload: {}, transactions: [
     { ...payload, amount: '0.10' }, { ...payload, amount: '0.20' },
-    { amount: '0.05', type: 'income', date: '2026-10-12', category: 'Tips' },
+    { amount: '0.05', type: 'income', date: '2026-10-12', category_id: incomeId },
   ] }, account, msg, 'en');
   expect(db.tables.transactions.slice(1).map((row) => [row.amount, row.wa_bot_message_id])).toEqual([
     ['0.10', 'new-receipt'], ['0.20', 'new-receipt'], ['0.05', 'new-receipt'],
@@ -245,7 +263,7 @@ type EditRace = { name: string; category: string | null; correction: Row; payloa
 const editRaces: EditRace[] = [
   { name: 'category cleared', category: expenseId, correction: { category_id: null }, payload: { amount: '35.50' } },
   { name: 'category assigned from null', category: null, correction: { category_id: expenseId }, payload: { type: 'income' } },
-  { name: 'type changed before category selection', category: null, correction: { type: 'income' }, payload: { category: 'Food' } },
+  { name: 'type changed before category selection', category: null, correction: { type: 'income' }, payload: { category_id: expenseId } },
   { name: 'date corrected', category: expenseId, correction: { date: '2026-10-11' }, payload: { description: 'Changed' } },
   { name: 'description corrected', category: expenseId, correction: { description: 'Concurrent correction' }, payload: { amount: '35.50' } },
 ];

@@ -4,17 +4,13 @@ const state = vi.hoisted(() => ({
   from: vi.fn(),
   rpc: vi.fn(),
   outcome: null as unknown,
-  outboundRow: { text: 'frozen fixture reply' as string | null, reply_payload: {} as unknown },
   claim: vi.fn(),
   renew: vi.fn(),
   fail: vi.fn(),
   prepare: vi.fn(),
   save: vi.fn(),
   commit: vi.fn(),
-  claimOutbound: vi.fn(),
-  freeze: vi.fn(),
-  dispatch: vi.fn(),
-  render: vi.fn(),
+  dispatchOutbound: vi.fn(),
 }));
 
 vi.mock('../src/services/supabase', () => ({
@@ -32,14 +28,11 @@ vi.mock('../src/processing/prepare', () => ({ prepareMessage: state.prepare }));
 vi.mock('../src/processing/commit', () => ({
   saveCommand: state.save, commitCommand: state.commit, decodeCommitResult: (value: unknown) => value,
 }));
-vi.mock('../src/delivery/repository', () => ({ claimOutbound: state.claimOutbound, freezeReply: state.freeze }));
-vi.mock('../src/delivery/dispatch', () => ({ dispatchClaim: state.dispatch }));
-vi.mock('../src/delivery/render', () => ({ renderReply: state.render }));
+vi.mock('../src/delivery/dispatch', () => ({ dispatchOutbound: state.dispatchOutbound }));
 
 import { processInbox } from '../src/processing/processor';
 import { recoverDueWork } from '../src/recovery';
 import type { InboxClaim } from '../src/intake/types';
-import type { OutboundClaim } from '../src/delivery/types';
 
 const inboxId = '123e4567-e89b-42d3-a456-426614174000';
 const outboundId = '123e4567-e89b-42d3-a456-426614174001';
@@ -55,7 +48,6 @@ const claim: InboxClaim = {
   },
   command: null,
 };
-const outboundClaim = { id: outboundId, text: 'frozen fixture reply' } as OutboundClaim;
 const committed = {
   outcome: 'committed' as const, code: 'created', batchId: null,
   transactionIds: [], outboundIds: [outboundId],
@@ -64,12 +56,11 @@ const committed = {
 beforeEach(() => {
   vi.clearAllMocks();
   state.outcome = null;
-  state.outboundRow = { text: 'frozen fixture reply', reply_payload: {} };
-  state.from.mockImplementation((table: string) => ({
+  state.from.mockImplementation(() => ({
     select: () => ({
       eq: () => ({
         maybeSingle: async () => ({
-          data: table === 'bot_inbox' ? (state.outcome === null ? { outcome: null } : { outcome: state.outcome }) : state.outboundRow,
+          data: { outcome: state.outcome },
           error: null,
         }),
       }),
@@ -81,24 +72,20 @@ beforeEach(() => {
   state.prepare.mockResolvedValue({ kind: 'reply', accountId: null, reply: { kind: 'ordinary', text: 'fixture' } });
   state.save.mockResolvedValue(undefined);
   state.commit.mockResolvedValue(committed);
-  state.claimOutbound.mockResolvedValue(outboundClaim);
-  state.freeze.mockResolvedValue('frozen fixture reply');
-  state.dispatch.mockResolvedValue(undefined);
-  state.render.mockReturnValue('rendered fixture reply');
+  state.dispatchOutbound.mockResolvedValue(undefined);
   state.rpc.mockResolvedValue({ data: { inboxIds: [], outboundIds: [] }, error: null });
 });
 
 it('replays a stored outcome without claiming or committing the inbox again', async () => {
   state.outcome = committed;
-  state.claimOutbound.mockResolvedValue(null);
 
   await processInbox(inboxId);
 
   expect(state.claim).not.toHaveBeenCalled();
   expect(state.prepare).not.toHaveBeenCalled();
   expect(state.commit).not.toHaveBeenCalled();
-  expect(state.claimOutbound).toHaveBeenCalledWith(outboundId);
-  expect(state.dispatch).not.toHaveBeenCalled();
+  expect(state.dispatchOutbound).toHaveBeenCalledWith(outboundId);
+  expect(state.dispatchOutbound).toHaveBeenCalledTimes(1);
 });
 
 it('persists a retryable failure instead of treating preparation failure as completion', async () => {
@@ -108,7 +95,7 @@ it('persists a retryable failure instead of treating preparation failure as comp
 
   expect(state.fail).toHaveBeenCalledWith(claim, 'processing_unavailable', true);
   expect(state.commit).not.toHaveBeenCalled();
-  expect(state.claimOutbound).not.toHaveBeenCalled();
+  expect(state.dispatchOutbound).not.toHaveBeenCalled();
 });
 it('dispatches a committed business rejection without scheduling an inbox retry', async () => {
   state.commit.mockResolvedValue({
@@ -118,17 +105,12 @@ it('dispatches a committed business rejection without scheduling an inbox retry'
   await processInbox(inboxId);
 
   expect(state.fail).not.toHaveBeenCalled();
-  expect(state.claimOutbound).toHaveBeenCalledWith(outboundId);
-  expect(state.dispatch).toHaveBeenCalledWith(outboundClaim);
+  expect(state.dispatchOutbound).toHaveBeenCalledWith(outboundId);
 });
 
-it('freezes and dispatches only database-selected due outbound work', async () => {
+it('uses the shared freezing and dispatch path for database-selected due outbound work', async () => {
   const queueSend = vi.fn().mockResolvedValue(undefined);
   state.rpc.mockResolvedValue({ data: { inboxIds: [inboxId], outboundIds: [outboundId] }, error: null });
-  state.outboundRow = { text: null, reply_payload: {
-    language: 'en', kind: 'ordinary', code: 'reply', text: 'fixture', rows: [],
-    categoryName: null, categoryType: null, accountName: null,
-  } };
 
   await recoverDueWork({ BOT_QUEUE: { send: queueSend } } as never);
 
@@ -137,13 +119,7 @@ it('freezes and dispatches only database-selected due outbound work', async () =
   });
   expect(queueSend).toHaveBeenCalledTimes(1);
   expect(queueSend).toHaveBeenCalledWith({ inboxId });
-  expect(state.render).toHaveBeenCalledWith({
-    language: 'en', kind: 'ordinary', code: 'reply', text: 'fixture', rows: [],
-    categoryName: null, categoryType: null, accountName: null,
-  });
-  expect(state.freeze).toHaveBeenCalledWith(outboundId, 'rendered fixture reply');
-  expect(state.claimOutbound).toHaveBeenCalledWith(outboundId);
-  expect(state.dispatch).toHaveBeenCalledWith(outboundClaim);
+  expect(state.dispatchOutbound).toHaveBeenCalledWith(outboundId);
 });
 it('cleans expired export snapshots during scheduled recovery', async () => {
   state.rpc.mockImplementation(async (name: string) => ({ data: { inboxIds: [], outboundIds: [] }, error: null }));

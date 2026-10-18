@@ -1,0 +1,14 @@
+import {expect,it,vi} from 'vitest';
+vi.mock('../src/services/supabase',()=>({supabase:{}}));
+vi.mock('../src/services/whatsapp',()=>({sendWA:vi.fn()}));
+import {classificationCategory} from '../src/handlers/transactionData';
+import {validateAIResponse} from '../src/ai/validation';
+import {buildPrompt} from '../src/ai/prompts';
+import type {Category} from '../src/categories';
+const parent:Category={id:'20000000-0000-4000-8000-000000000001',account_id:'10000000-0000-4000-8000-000000000001',code:'expense.food',name_id:'Makanan',name_en:'Food',parent_id:null,type:'expense',is_custom:false,is_active:true,sort_order:0};
+const child:Category={...parent,id:'20000000-0000-4000-8000-000000000002',parent_id:parent.id,code:'expense.food.dining_out',name_id:'Makan di Luar',name_en:'Dining Out'};
+const other:Category={...parent,id:'20000000-0000-4000-8000-000000000003',code:'expense.other',name_id:'Lainnya',name_en:'Other'};
+it('uses exact eligible IDs and only omission falls back to system Other',()=>{const rows=[parent,child,other];expect(classificationCategory(child.id,'expense',rows)).toBe(child);expect(classificationCategory(parent.id,'expense',rows)).toBe(parent);expect(classificationCategory(undefined,'expense',rows)).toBe(other);expect(()=>classificationCategory('20000000-0000-4000-8000-000000000099','expense',rows)).toThrow();expect(()=>classificationCategory(null,'income',rows)).toThrow();});
+it('validator rejects display-name identity and malformed UUIDs',()=>{for(const payload of [{category:'Food'},{category_id:'Food'}])expect(()=>validateAIResponse({action:'EDIT_TRANSACTION',payload})).toThrow();expect(validateAIResponse({action:'EDIT_TRANSACTION',payload:{description:'fixed'}}).payload).not.toHaveProperty('category_id');});
+it('preserves original language and optional parent/translation',()=>{expect(validateAIResponse({action:'ADD_CATEGORY',payload:{category_name:'Travel',category_language:'en',category_type:'expense',parent_category_id:parent.id,translated_name:'Perjalanan'}}).payload).toMatchObject({category_name:'Travel',category_language:'en',parent_category_id:parent.id,translated_name:'Perjalanan'});});
+it('prompt examples use runtime IDs and bilingual eligible paths',()=>{const prompt=buildPrompt('warteg 30rb','id',[parent,child,other],undefined,undefined,new Date('2026-04-15T03:00:00Z'));expect(prompt).toContain(child.id);expect(prompt).toContain('Food / Dining Out');expect(prompt).toContain('Makanan / Makan di Luar');expect(prompt).not.toContain('category":"Gaji');});

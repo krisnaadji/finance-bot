@@ -69,6 +69,12 @@ const migrations = [
   '202610130005_exact_reporting.sql',
   '202610130006_export_snapshots.sql',
 ];
+async function executeMigration(source: string): Promise<void> {
+  const client = await pool.connect();
+  try { await client.query(source); }
+  catch (error) { await client.query('rollback'); throw error; }
+  finally { client.release(); }
+}
 const applied = new Set<string>();
 export async function applyPhase2MigrationsThrough(lastFile:string): Promise<void> {
   await initializeFixture();
@@ -77,7 +83,7 @@ export async function applyPhase2MigrationsThrough(lastFile:string): Promise<voi
   for(const file of migrations.slice(0,end+1)){
     if(applied.has(file))continue;
     const source=await readFile(new URL(`../../../supabase/migrations/${file}`,import.meta.url),'utf8');
-    await sql(source);applied.add(file);
+    await executeMigration(source);applied.add(file);
   }
 }
 export async function applyPhase2Migrations(): Promise<void> {
@@ -87,7 +93,26 @@ export async function applyPhase2Migrations(): Promise<void> {
     let source:string;
     try{source=await readFile(new URL(`../../../supabase/migrations/${file}`,import.meta.url),'utf8');}
     catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')throw new Error(`Phase 2 migration missing: ${file}`);throw error;}
-    await sql(source);applied.add(file);
+    await executeMigration(source);applied.add(file);
+  }
+}
+
+const phase3Migrations = [
+  '202610150001_category_identity_expand.sql',
+  '202610150002_category_operations.sql',
+  '202610150003_hierarchy_reporting.sql',
+  '202610150004_hierarchy_exports.sql',
+  '202610150005_category_catalog_activate.sql',
+  '202610150006_category_contract.sql',
+];
+export async function applyPhase3MigrationsThrough(lastFile = phase3Migrations[5]): Promise<void> {
+  const end = phase3Migrations.indexOf(lastFile);
+  if (end < 0) throw new Error('Unknown Phase 3 migration');
+  await applyPhase2Migrations();
+  for (const file of phase3Migrations.slice(0, end + 1)) {
+    if (applied.has(file)) continue;
+    await executeMigration(await readFile(new URL(`../../../supabase/migrations/${file}`, import.meta.url), 'utf8'));
+    applied.add(file);
   }
 }
 

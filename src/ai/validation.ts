@@ -1,5 +1,5 @@
 import type { AIPayload, AIResponse } from './types';
-import { isBusinessDate, isRecord, parseAmount } from '../utils/financialValidation';
+import { isBusinessDate, isRecord, isUuid, parseAmount } from '../utils/financialValidation';
 export class InvalidAICommand extends Error {
   constructor() { super('Invalid AI command'); this.name = 'InvalidAICommand'; }
 }
@@ -17,7 +17,7 @@ function selection(value: unknown): number {
   return value;
 }
 const transactionKeys: Record<string, true> = {
-  amount: true, type: true, category: true, description: true, date: true, selection_index: true,
+  amount: true, type: true, category_id: true, description: true, date: true, selection_index: true,
 };
 function transaction(value: unknown, create: boolean): AIPayload {
   if (!isRecord(value)) return reject();
@@ -27,9 +27,9 @@ function transaction(value: unknown, create: boolean): AIPayload {
   if (Object.hasOwn(value, 'type')) p.type = txnType(value.type);
   if (Object.hasOwn(value, 'date')) { if (!isBusinessDate(value.date)) return reject(); p.date = value.date; }
   if (Object.hasOwn(value, 'description')) { if (typeof value.description !== 'string') return reject(); p.description = value.description; }
-  if (Object.hasOwn(value, 'category')) {
-    if (value.category !== null && typeof value.category !== 'string') return reject();
-    p.category = value.category === null ? null : value.category.trim() || null;
+  if (Object.hasOwn(value, 'category_id')) {
+    if (value.category_id !== null && !isUuid(value.category_id)) return reject();
+    p.category_id = value.category_id;
   }
   if (Object.hasOwn(value, 'selection_index')) p.selection_index = selection(value.selection_index);
   if (create && (!p.amount || !p.type || !p.date)) return reject();
@@ -55,9 +55,14 @@ export function validateAIResponse(value: unknown): AIResponse {
       if (isRecord(raw) && Object.hasOwn(raw, 'selection_index')) payload.selection_index = selection(raw.selection_index);
       break;
     case 'ADD_CATEGORY':
-      if (!isRecord(raw) || Object.keys(raw).some((key) => !['category_name', 'category_type'].includes(key)) ||
-          typeof raw.category_name !== 'string' || !raw.category_name.trim()) return reject();
-      payload = { category_name: raw.category_name.trim(), category_type: txnType(raw.category_type) }; break;
+      if (!isRecord(raw) || Object.keys(raw).some((key) => !['category_name','category_type','category_language','parent_category_id','translated_name'].includes(key)) ||
+          typeof raw.category_name !== 'string' || !raw.category_name.trim() || [...raw.category_name.trim()].length > 120 ||
+          (raw.category_language !== 'id' && raw.category_language !== 'en') ||
+          (raw.parent_category_id !== undefined && raw.parent_category_id !== null && !isUuid(raw.parent_category_id)) ||
+          (raw.translated_name !== undefined && raw.translated_name !== null && (typeof raw.translated_name !== 'string' || !raw.translated_name.trim() || [...raw.translated_name.trim()].length > 120))) return reject();
+      payload = {category_name:raw.category_name.trim(),category_type:txnType(raw.category_type),category_language:raw.category_language,
+        ...(raw.parent_category_id !== undefined ? {parent_category_id:raw.parent_category_id as string|null} : {}),
+        ...(typeof raw.translated_name === 'string' ? {translated_name:raw.translated_name.trim()} : {})}; break;
     case 'GET_SUMMARY':
       if (raw != null && !isRecord(raw)) return reject();
       if (isRecord(raw)) {

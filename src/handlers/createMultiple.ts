@@ -5,13 +5,13 @@ import type { Lang } from '../utils/lang';
 import { validateAIResponse, InvalidAICommand } from '../ai/validation';
 import { t } from '../i18n/bot';
 import { formatIDR } from '../utils/format';
-import { BotDeliveryError, BotWriteError, budgetWarnings, canonicalTxn, deliverTransactionReceipt, loadWriteContext, resolveCategory, transactionColumns, transactionReceipt, type CanonicalTxn } from './transactionData';
+import { BotDeliveryError, BotWriteError, budgetWarnings, canonicalTxn, classificationCategory, deliverTransactionReceipt, loadWriteContext, transactionColumns, transactionReceipt, type CanonicalTxn } from './transactionData';
 export async function createMultiple(ai: AIResponse, account: Account, msg: IncomingMessage, lang: Lang): Promise<void> {
   const command = validateAIResponse(ai);
   if (command.action !== 'CREATE_MULTIPLE' || !command.transactions) throw new InvalidAICommand();
   const { categories, displayName } = await loadWriteContext(account, msg);
   const rows = command.transactions.map((p) => ({ account_id: account.id,
-    category_id: resolveCategory(p.category, p.type!, categories)?.id ?? null, amount: p.amount!, type: p.type!,
+    category_id: classificationCategory(p.category_id, p.type!, categories).id, amount: p.amount!, type: p.type!,
     description: p.description ?? '', date: p.date!, raw_message: msg.text, wa_user_message_id: msg.messageId,
     recorded_by_name: displayName, recorded_by_phone: msg.rawFrom }));
   const inserted: CanonicalTxn[] = [];

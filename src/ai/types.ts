@@ -1,7 +1,7 @@
 export interface AIPayload {
   amount?: string;
   type?: 'income' | 'expense';
-  category?: string | null;
+  category_id?: string | null;
   description?: string;
   date?: string;
   selection_index?: number; // 1-based index for EDIT_FROM_MULTIPLE
@@ -10,6 +10,9 @@ export interface AIPayload {
   salary_year?: number;
   category_name?: string;
   category_type?: 'income' | 'expense';
+  category_language?: 'id' | 'en';
+  parent_category_id?: string | null;
+  translated_name?: string | null;
 }
 
 export interface AIResponse {

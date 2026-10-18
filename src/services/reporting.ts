@@ -1,13 +1,15 @@
 import { supabase } from './supabase';
 import { isRecord, isUuid } from '../utils/financialValidation';
+import { decodeCategory as decodeCategoryMetadata, type Category } from '../categories';
 
-export type FinanceCategory = { id: string | null; name: string; amount: string };
+export type FinanceCategory = { id: string | null; name_id: string | null; name_en: string | null; amount: string };
 export type FinanceSummaryRow = {
   id: string;
   date: string;
   description: string;
   amount: string;
-  category: string;
+  category: Category | null;
+  parent: Category | null;
 };
 export type FinanceSummary = {
   income: string;
@@ -15,6 +17,7 @@ export type FinanceSummary = {
   net: string;
   categories: FinanceCategory[];
   spendingByCategoryId: Record<string, string>;
+  categoryDetails: Array<{parentId:string|null;categoryId:string|null;amount:string}>;
   byMonth: Record<string, { income: string; expense: string }>;
   topExpenses: FinanceSummaryRow[];
   topIncomes: FinanceSummaryRow[];
@@ -64,22 +67,27 @@ function decimalMap(value: unknown): Record<string, string> {
 
 function decodeCategory(value: unknown): FinanceCategory {
   if (!isRecord(value) || (value.id !== null && !isUuid(value.id)) ||
-      typeof value.name !== 'string' || !decimal(value.amount)) throw new Error('invalid_finance_summary');
-  return { id: value.id, name: value.name, amount: value.amount };
+      (value.name_id !== null && typeof value.name_id !== 'string') || (value.name_en !== null && typeof value.name_en !== 'string') ||
+      (value.id !== null && !(value.name_id || value.name_en)) || !decimal(value.amount)) throw new Error('invalid_finance_summary');
+  return {id:value.id,name_id:value.name_id as string|null,name_en:value.name_en as string|null,amount:value.amount};
 }
 
 function decodeRows(value: unknown): FinanceSummaryRow[] {
   if (!Array.isArray(value)) throw new Error('invalid_finance_summary');
   return value.map((row) => {
     if (!isRecord(row) || !isUuid(row.id) || !validDate(row.date) || typeof row.description !== 'string' ||
-        !decimal(row.amount) || typeof row.category !== 'string') throw new Error('invalid_finance_summary');
-    return { id: row.id, date: row.date, description: row.description, amount: row.amount, category: row.category };
+        !decimal(row.amount)) throw new Error('invalid_finance_summary');
+    const category=row.categories === null ? null : decodeCategoryMetadata(row.categories);
+    const parent=row.parent === null ? null : decodeCategoryMetadata(row.parent);
+    if ((category?.parent_id != null && !parent) ||
+        (parent && (!category || category.parent_id !== parent.id || category.account_id !== parent.account_id || category.type !== parent.type || parent.parent_id !== null || parent.code === 'salary'))) throw new Error('invalid_finance_summary');
+    return {id:row.id,date:row.date,description:row.description,amount:row.amount,category,parent};
   });
 }
 
 export function decodeFinanceSummary(value: unknown): FinanceSummary {
   if (!isRecord(value) || !decimal(value.income) || !decimal(value.expense) || !decimal(value.net, true) ||
-      !Array.isArray(value.categories) || !isRecord(value.byMonth)) throw new Error('invalid_finance_summary');
+      !Array.isArray(value.categories) || !Array.isArray(value.categoryDetails) || !isRecord(value.byMonth)) throw new Error('invalid_finance_summary');
   const byMonth: FinanceSummary['byMonth'] = {};
   for (const [month, totals] of Object.entries(value.byMonth)) {
     if (!MONTH.test(month) || !isRecord(totals) || !decimal(totals.income) || !decimal(totals.expense)) {
@@ -93,6 +101,10 @@ export function decodeFinanceSummary(value: unknown): FinanceSummary {
     net: value.net,
     categories: value.categories.map(decodeCategory),
     spendingByCategoryId: decimalMap(value.spendingByCategoryId),
+    categoryDetails:value.categoryDetails.map(detail=>{
+      if (!isRecord(detail) || (detail.parentId !== null && !isUuid(detail.parentId)) || (detail.categoryId !== null && !isUuid(detail.categoryId)) || !decimal(detail.amount)) throw new Error('invalid_finance_summary');
+      return {parentId:detail.parentId,categoryId:detail.categoryId,amount:detail.amount};
+    }),
     byMonth,
     topExpenses: decodeRows(value.topExpenses),
     topIncomes: decodeRows(value.topIncomes),

@@ -8,7 +8,7 @@ export type PreparedCommand =
   | { kind: 'edit'; accountId: string; transactionId: string; before: TxnInput; editedByName: string; patch: Partial<TxnInput> }
   | { kind: 'delete_prompt'; accountId: string; transactionId: string }
   | { kind: 'delete_decision'; accountId: string; pendingId: string; confirmationMessageId: string; decision: 'confirm' | 'cancel' }
-  | { kind: 'add_category'; accountId: string; name: string; type: 'income' | 'expense' }
+  | { kind: 'add_category'; accountId: string; nameId: string | null; nameEn: string | null; parentId: string | null; type: 'income' | 'expense' }
   | { kind: 'setup'; code: string; language: 'id' | 'en' }
   | { kind: 'set_language'; accountId: string; language: 'id' | 'en' }
   | { kind: 'reply'; accountId: string | null; reply: Reply };
@@ -75,9 +75,11 @@ export function decodeCommand(value: unknown): PreparedCommand {
       return { kind,accountId:uuid(value.accountId),pendingId:uuid(value.pendingId),confirmationMessageId,decision:value.decision };
     }
     case 'add_category': {
-      keys(value,['kind','accountId','name','type']);
-      const name=text(value.name).trim();if (!name) invalid();
-      return { kind,accountId:uuid(value.accountId),name,type:txnType(value.type) };
+      keys(value,['kind','accountId','nameId','nameEn','parentId','type']);
+      const nameId=value.nameId === null ? null : text(value.nameId).trim();
+      const nameEn=value.nameEn === null ? null : text(value.nameEn).trim();
+      if ((!nameId && !nameEn) || (nameId !== null && (!nameId || [...nameId].length > 120)) || (nameEn !== null && (!nameEn || [...nameEn].length > 120))) invalid();
+      return {kind,accountId:uuid(value.accountId),nameId,nameEn,parentId:value.parentId === null ? null : uuid(value.parentId),type:txnType(value.type)};
     }
     case 'setup': {
       keys(value,['kind','code','language']);

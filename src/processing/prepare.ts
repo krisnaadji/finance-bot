@@ -8,7 +8,7 @@ import type { Lang } from '../utils/lang';
 import { isNo, isYesNo } from '../utils/format';
 import { isRecord, isUuid } from '../utils/financialValidation';
 import type { InboxClaim } from '../intake/types';
-import { BotWriteError, canonicalTxn, loadWriteContext, resolveCategory, transactionColumns } from '../handlers/transactionData';
+import { BotWriteError, canonicalTxn, categoryName, classificationCategory, loadWriteContext, transactionColumns } from '../handlers/transactionData';
 import type { CanonicalTxn, CategoryRow } from '../handlers/transactionData';
 import { categoriesReply } from '../handlers/getCategories';
 import { summaryReply } from '../handlers/getSummary';
@@ -19,6 +19,7 @@ import { parseSalaryPeriodArgs } from '../handlers/salaryPeriodArgs';
 import { lookupReceipt } from './commit';
 import { decodeCommand } from './types';
 import type { PreparedCommand, TxnInput } from './types';
+import { resolveCategoryId } from '../categories';
 
 async function accountForChat(chatId: string): Promise<Account | null> {
   const {data,error}=await supabase.from('accounts').select('*').eq('wa_chat_id',chatId).eq('is_active',true).maybeSingle();
@@ -48,7 +49,7 @@ function input(txn: CanonicalTxn): TxnInput {
   return {categoryId:txn.category_id,amount:txn.amount,type:txn.type,description:txn.description,date:txn.date};
 }
 function createInput(p: AIPayload, categories: CategoryRow[]): TxnInput {
-  return {categoryId:resolveCategory(p.category,p.type!,categories)?.id ?? null,amount:p.amount!,type:p.type!,
+  return {categoryId:classificationCategory(p.category_id,p.type!,categories).id,amount:p.amount!,type:p.type!,
     description:p.description ?? '',date:p.date!};
 }
 function dashboardReply(lang: Lang): string {
@@ -117,17 +118,19 @@ export async function prepareMessage(claim: InboxClaim): Promise<PreparedCommand
       if (mapping.length) {
         const targetIds=mapping.flatMap(item=>item.transactionId ? [item.transactionId] : []);
         if (!targetIds.length) return reply(t[lang].resourceMissing);
-        const selected=await supabase.from('transactions').select(transactionColumns+',categories(name)').eq('account_id',account.id).in('id',targetIds);
+        const history=await loadWriteContext(account,d);
+        const selected=await supabase.from('transactions').select(transactionColumns).eq('account_id',account.id).in('id',targetIds);
         if (selected.error || !Array.isArray(selected.data)) throw new BotWriteError('dependency');
         const transactions=selected.data.map(raw=>{
           if (!isRecord(raw)) throw new BotWriteError('dependency');
-          return {txn:canonicalTxn(raw,account!.id),category:isRecord(raw.categories) && typeof raw.categories.name === 'string' ? raw.categories.name : t[lang].uncategorized};
+          const txn=canonicalTxn(raw,account!.id);
+          return {txn,category:categoryName(txn,history.categories,lang)};
         });
         const first=transactions.find(row=>row.txn.id===mapping[0].transactionId);
         const single:TxnForBot|undefined=mapping.length === 1 && first ? {id:first.txn.id,amount:first.txn.amount,description:first.txn.description,date:first.txn.date,category_name:first.category} : undefined;
         const context=mapping.length > 1 ? mapping.map(item=>{
           const row=transactions.find(row=>row.txn.id===item.transactionId);
-          return row ? `${item.index}. ${row.txn.description} : ${row.txn.type === 'income' ? '+' : '-'}Rp${row.txn.amount} (${row.txn.date})`
+          return row ? `${item.index}. ${row.txn.description} : ${row.txn.type === 'income' ? '+' : '-'}Rp${row.txn.amount} (${row.txn.date}) [${row.category}]`
             : `${item.index}. ${t[lang].resourceMissing}`;
         }).join('\n') : undefined;
         ai=validateAIResponse(await callAI(text,account,lang,single,context,new Date(d.receivedAt)));
@@ -147,7 +150,12 @@ export async function prepareMessage(claim: InboxClaim): Promise<PreparedCommand
         if (p.type !== undefined) patch.type=p.type;
         if (p.date !== undefined) patch.date=p.date;
         if (p.description !== undefined) patch.description=p.description;
-        if (Object.hasOwn(p,'category')) patch.categoryId=resolveCategory(p.category,p.type ?? current.type,categories)?.id ?? null;
+        if (Object.hasOwn(p,'category_id')) {
+          try { patch.categoryId=resolveCategoryId(p.category_id,p.type ?? current.type,categories)?.id ?? null; }
+          catch { throw new BotWriteError('invalid'); }
+        } else if (p.type !== undefined && p.type !== current.type && current.category_id !== null) {
+          try { resolveCategoryId(current.category_id,p.type,categories); } catch { throw new BotWriteError('invalid'); }
+        }
         if (!Object.keys(patch).length) return reply(t[lang].invalidCommand);
         return {kind:'edit',accountId:account.id,transactionId:current.id,before:input(current),editedByName:displayName,patch};
       }
@@ -165,7 +173,18 @@ export async function prepareMessage(claim: InboxClaim): Promise<PreparedCommand
       if (rows.length < 1 || rows.length > 100) throw new InvalidAICommand();
       return decodeCommand({kind:'create',accountId:account.id,rows,recordedByName:displayName});
     }
-    if (ai.action === 'ADD_CATEGORY') return {kind:'add_category',accountId:account.id,name:ai.payload.category_name!,type:ai.payload.category_type!};
+    if (ai.action === 'ADD_CATEGORY') {
+      const p=ai.payload;
+      const {categories}=await loadWriteContext(account,d);
+      if (p.parent_category_id != null) {
+        let parent;
+        try { parent=resolveCategoryId(p.parent_category_id,p.category_type!,categories); } catch { throw new BotWriteError('invalid'); }
+        if (!parent || parent.parent_id !== null || parent.code === 'salary') throw new BotWriteError('invalid');
+      }
+      return decodeCommand({kind:'add_category',accountId:account.id,type:p.category_type,
+        nameId:p.category_language === 'id' ? p.category_name : p.translated_name ?? null,
+        nameEn:p.category_language === 'en' ? p.category_name : p.translated_name ?? null,parentId:p.parent_category_id ?? null});
+    }
     if (ai.action === 'GET_SUMMARY') return reply(await summaryReply(ai,account,lang,new Date(d.receivedAt)));
     if (ai.action === 'GET_CATEGORIES') return reply(await categoriesReply(account,lang));
     return reply(ai.reply || t[lang].helpText);

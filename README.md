@@ -11,7 +11,7 @@ Bot replies: "💸 Tercatat! Makan Siang · -Rp35.000 · Kebutuhan Pokok · 📅
 
 ## Architecture
 
-The Worker verifies the webhook before dispatching messages through `src/router.ts`. Commands handle setup, reporting, categories, and language preferences. Natural-language financial commands pass through the configured AI adapter and shared runtime validation before any write.
+The Worker verifies webhooks, persists intake, and processes commands through `src/processing/prepare.ts` and the fenced database commit pipeline. `src/router.ts` remains a direct-handler entry point using the same category-ID and validation conventions. Financial outcomes and immutable receipt snapshots commit together; delivery retries reuse frozen text without replaying financial writes.
 
 Delete confirmation uses `src/handlers/deleteTxn.ts` and a database RPC. Each prompt is bound to its account, chat, requester, request UUID, and delivered provider message ID. After requesting deletion, send plain `ya/tidak` or `yes/no` in the same chat; quoting the confirmation is optional. Only the requester can confirm or cancel their pending deletion, within its 60-second database-checked lifetime. An explicitly quoted unrelated prompt is rejected. Plain yes/no messages never create financial transactions.
 
@@ -390,7 +390,7 @@ npm exec vitest -- run --config vitest.integration.config.ts tests/integration/d
 
 The suite covers RPC authorization, atomic confirmation consumption, concurrent requests, and expiry after lock waits. It does not prove Supabase RPC exposure or provider reply IDs.
 
-Account, batch, and invitation changes use database transactions with persisted retry outcomes. Bilingual categories and image parsing remain later phases.
+Account, batch, and invitation changes use database transactions with persisted retry outcomes. Bilingual category hierarchy is implemented locally in Phase 3; image parsing remains out of scope.
 
 `/language` looks up the member by account and WhatsApp sender, then updates the existing row or inserts a new preference. Production has no unique constraint on that pair, so the command cannot use a composite-key upsert. Updating the preference preserves the member ID, linked user, role, and display name. Phase 2 serializes first-time member creation through the account lock.
 
@@ -424,6 +424,22 @@ Use `npm run recover:delivery -- <action> <outbound-uuid> [argument]`. Actions a
 
 Verified webhooks persist normalized messages before acknowledging, then enqueue their database IDs. Queue consumers process one message at a time; the minute scheduler re-enqueues due inbox work, dispatches due outbound replies, and removes expired export snapshots. The Wrangler config declares `financebot-intake` and the cron binding. This does not create the remote queue or deploy the Worker; provision and production rollout remain separate authorized steps.
 
-Each dashboard export captures matching rows, category labels, exact amounts, and order for 15 minutes. The dashboard reads pages of at most 500 rows and returns a CSV only after validating every row. Description and category cells are escaped against spreadsheet formula execution. Exports above 99,999 rows or 32 MiB are rejected.
+Each dashboard export captures matching rows, root/subcategory labels in its requested locale, exact amounts, and order for 15 minutes. The dashboard reads pages of at most 500 rows and returns a CSV only after validating every row. Description and both category cells are escaped against spreadsheet formula execution. Exports above 99,999 rows or 32 MiB are rejected. Existing frozen exports keep their original category text and a blank subcategory.
 
 Exact money values cross SQL and API boundaries as decimal strings. Dashboard summary fields `income`, `expense`, and `net`, category totals, monthly totals, and budget spending use strings. Business dates use `YYYY-MM-DD` calendar values in the `2000-01-01` through `2100-12-31` range; they are not parsed as UTC timestamps.
+
+## Bilingual category hierarchy (Phase 3)
+
+Live categories use `id`, stable nullable `code`, `name_id`, `name_en`, and optional `parent_id`; there is no live `categories.name` contract. At least one label is required, and a missing translation falls back to the other language. A child must share its root's account and type. Inactive categories remain readable in historical receipts and edits, but neither an inactive category nor a child of an inactive root is eligible for a new selection.
+
+Both AI adapters receive eligible IDs, Indonesian/English paths, and slang examples in one request. Classification returns `category_id`, never a display label. Broad input such as `beli makanan 30rb` may select Food & Drinks directly; `makan di warteg 30rb` supports Dining Out. Omitted classification falls back to active `expense.other` or `income.other`; an unknown, foreign, inactive, or incompatible supplied ID is rejected rather than silently reassigned. Category creation preserves `category_name` and explicit `category_language`, with optional `parent_category_id` and `translated_name`. Translation is not required to save the original name.
+
+Regular salary is identified only by account-scoped code `salary`, including inactive history, and has no children. Bonus is separate. Salary periods start at the earliest salary in the selected month and end the day before the latest salary in the following calendar month, or Jakarta today when that following month has no salary. An omitted month selects the latest salary's month. Monthly budgets remain calendar-based and aggregate direct root plus child expense once.
+
+Created/edited expense receipts append optional current-month warnings once per touched root before the first reply freeze. Historical-dated expenses, older snapshots without category IDs, already-frozen replies, help, and category listings do not trigger warning lookups. Warning dependencies cannot roll back a committed transaction: an unavailable lookup is included as localized warning-unavailable text in the same frozen receipt. Retries reuse that text without recomputing warnings. Frozen `categoryName` receipt text is historical presentation and remains valid after label changes.
+
+Apply the six new Phase 3 migrations in order after the released Phase 1/2 chain. Migration 002 temporarily accepts outstanding old add-category commands; drain unfinished old `{name,type}` commands before migration 006 and the final Worker decoder cutover. Never rewrite persisted commands or immutable receipt/export snapshots. Migration 006 removes the legacy name bridge only after its queue/catalog/dependency preflight. Existing category IDs, financial references, Basic Needs spending, and budgets are preserved; Food & Drinks and Household do not inherit the old Basic Needs budget.
+
+No new bot environment variables or provider changes are required. Dashboard translation has separate server-only provider configuration and does not call the Worker. Provider-quality evaluation requires separately authorized non-production AI credentials; offline tests do not establish live model accuracy. Local implementation does not authorize deployment, credential access, assistant-originated WhatsApp messages, or synthetic production webhooks.
+
+Local verification on 2026-10-17 covered 310 bot unit tests, the native PostgreSQL hierarchy/transition/report/export suites, and 17 deletion-confirmation tests in a separate empty database. Durable processing and scheduled recovery both used real SQL commits and intercepted WhatsApp sends, including a crash after commit, one frozen parent-budget warning, and replay without another write or send. Both TypeScript checks and lint passed; lint retains the existing unused `conflicts` warning in `src/worker.ts`.

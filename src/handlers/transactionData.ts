@@ -8,6 +8,7 @@ import { isBusinessDate, isRecord, isUuid, parseAmount } from '../utils/financia
 import { formatDate, formatIDR } from '../utils/format';
 import { logger } from '../utils/logger';
 import { t } from '../i18n/bot';
+import { categoryColumns, categoryLabel, categoryPath, categoryRoot, decodeCategory, resolveCategoryId, type Category } from '../categories';
 export class BotWriteError extends Error {
   constructor(public readonly kind: 'invalid' | 'dependency' | 'missing' | 'conflict' | 'inactive') {
     super(kind); this.name = 'BotWriteError';
@@ -16,7 +17,7 @@ export class BotWriteError extends Error {
 export class BotDeliveryError extends Error {
   constructor() { super('Post-commit delivery failed'); this.name = 'BotDeliveryError'; }
 }
-export type CategoryRow = { id: string; account_id: string; name: string; type: 'income' | 'expense'; is_active: boolean };
+export type CategoryRow = Category;
 export type CanonicalTxn = { id: string; account_id: string; amount: string; type: 'income' | 'expense'; description: string; date: string; category_id: string | null };
 export const transactionColumns = 'id,account_id,amount,type,description,date,category_id';
 export async function assertActiveLinkedAccount(account: Account, msg: IncomingMessage): Promise<void> {
@@ -27,23 +28,23 @@ export async function assertActiveLinkedAccount(account: Account, msg: IncomingM
 }
 export async function loadWriteContext(account: Account, msg: IncomingMessage): Promise<{ categories: CategoryRow[]; displayName: string }> {
   await assertActiveLinkedAccount(account, msg);
-  const cats = await supabase.from('categories').select('id,account_id,name,type,is_active').eq('account_id', account.id);
+  const cats = await supabase.from('categories').select(categoryColumns).eq('account_id', account.id);
   if (cats.error || !Array.isArray(cats.data)) throw new BotWriteError('dependency');
-  const categories: CategoryRow[] = cats.data.map((row: unknown) => {
-    if (!isRecord(row) || !isUuid(row.id) || row.account_id !== account.id || typeof row.name !== 'string' ||
-        (row.type !== 'income' && row.type !== 'expense') || typeof row.is_active !== 'boolean') throw new BotWriteError('dependency');
-    return { id: row.id, account_id: account.id, name: row.name, type: row.type, is_active: row.is_active };
-  });
+  let categories: CategoryRow[];
+  try { categories = cats.data.map((row: unknown) => decodeCategory(row,account.id)); }
+  catch { throw new BotWriteError('dependency'); }
   const member = await supabase.from('members').select('display_name').eq('account_id', account.id).eq('wa_phone', msg.rawFrom).maybeSingle();
   if (member.error) throw new BotWriteError('dependency');
   return { categories, displayName: typeof member.data?.display_name === 'string' ? member.data.display_name : msg.rawFrom };
 }
-export function resolveCategory(name: string | null | undefined, type: 'income' | 'expense', categories: CategoryRow[]): CategoryRow | null {
-  if (!name) return null;
-  const matches = categories.filter((cat) => cat.name.trim().toLowerCase() === name.trim().toLowerCase());
-  if (!matches.length) return null;
-  if (matches.length !== 1 || !matches[0].is_active || matches[0].type !== type) throw new BotWriteError('invalid');
-  return matches[0];
+export function classificationCategory(id: string | null | undefined, type: 'income' | 'expense', categories: CategoryRow[]): CategoryRow {
+  try {
+    const selected = resolveCategoryId(id,type,categories);
+    if (selected) return selected;
+    const fallback = categories.find(c => c.code === `${type}.other` && c.type === type && c.parent_id === null);
+    if (!fallback || !resolveCategoryId(fallback.id,type,categories)) throw new Error('Missing Other category');
+    return fallback;
+  } catch { throw new BotWriteError('invalid'); }
 }
 export function canonicalTxn(value: unknown, accountId: string): CanonicalTxn {
   if (!isRecord(value) || !isUuid(value.id) || value.account_id !== accountId ||
@@ -58,7 +59,7 @@ export function categoryName(txn: CanonicalTxn, categories: CategoryRow[], lang:
   if (txn.category_id === null) return t[lang].uncategorized;
   const cat = categories.find((row) => row.id === txn.category_id && row.account_id === txn.account_id);
   if (!cat) throw new BotWriteError('dependency');
-  return cat.name;
+  return categoryPath(cat,categories,lang);
 }
 export function transactionReceipt(txn: CanonicalTxn, categories: CategoryRow[], lang: Lang, edited = false): string {
   const receipt = t[lang].txnCreated(txn.description, formatIDR(txn.amount), categoryName(txn, categories, lang), formatDate(txn.date, lang), txn.type);
@@ -81,12 +82,17 @@ export async function deliverTransactionReceipt(rows: CanonicalTxn[], account: A
 export async function budgetWarnings(rows: CanonicalTxn[], categories: CategoryRow[], accountId: string, lang: Lang): Promise<string> {
   // A warning-query failure does not undo or repeat a committed transaction.
   try {
+    const { from, to } = currentMonthRange();
+    const expenseIds = [...new Set(rows.filter(row => row.type === 'expense' && row.category_id && row.date >= from && row.date <= to).map(row => {
+      const cat=categories.find(c=>c.id===row.category_id && c.account_id===accountId);
+      if (!cat) throw new BotWriteError('dependency');
+      return categoryRoot(cat,categories).id;
+    }))];
+    if (!expenseIds.length) return '';
     const budgets = await supabase.from('budgets').select('category_id,amount::text').eq('account_id', accountId);
     if (budgets.error || !Array.isArray(budgets.data)) throw new BotWriteError('dependency');
-    const expenseIds = [...new Set(rows.filter((row) => row.type === 'expense' && row.category_id).map((row) => row.category_id!))];
-    const ids = expenseIds.filter((id) => budgets.data.some((budget) => budget.category_id === id));
+    const ids = expenseIds.filter(id => budgets.data.some(budget => budget.category_id === id));
     if (!ids.length) return '';
-    const { from, to } = currentMonthRange();
     const spending = await getFinanceBudgetSpending(accountId, from, to);
     const warnings: string[] = [];
     for (const id of ids) {
@@ -97,7 +103,9 @@ export async function budgetWarnings(rows: CanonicalTxn[], categories: CategoryR
       if (budgetCents <= 0n) throw new BotWriteError('dependency');
       const totalCents = cents(spending.spendingByCategoryId[id] ?? '0.00');
       const pct = ((totalCents * 100n + budgetCents / 2n) / budgetCents).toString();
-      const name = categories.find((row) => row.id === id)?.name ?? t[lang].uncategorized;
+      const category=categories.find(row=>row.id===id);
+      if (!category) throw new BotWriteError('dependency');
+      const name = categoryLabel(category,lang);
       if (totalCents > budgetCents) warnings.push(lang === 'id'
         ? `⚠️ *Budget ${name} terlampaui!* Rp${formatIDR(formatCents(totalCents))} / Rp${formatIDR(budget.amount)} (${pct}%)`
         : `⚠️ *${name} budget exceeded!* Rp${formatIDR(formatCents(totalCents))} / Rp${formatIDR(budget.amount)} (${pct}%)`);

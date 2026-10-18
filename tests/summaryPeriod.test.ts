@@ -1,164 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
-
-type SalaryResult = { data: unknown[]; error: null };
-type SalaryBuilder = {
-  select: () => SalaryBuilder;
-  eq: () => SalaryBuilder;
-  gte: (column: string, value: string) => SalaryBuilder;
-  lte: (column: string, value: string) => SalaryBuilder;
-  order: (column: string, options: { ascending: boolean }) => SalaryBuilder;
-  limit: (value: number) => Promise<SalaryResult>;
-  then: (onFulfilled?: (value: SalaryResult) => unknown) => Promise<unknown>;
-};
-
-const rows = vi.hoisted(() => ({
-  salaryRows: [] as unknown[],
-}));
-
-vi.mock('../src/services/supabase', () => ({
-  supabase: {
-    from: vi.fn(() => {
-      const state: {
-        from?: string;
-        to?: string;
-        ascending: boolean;
-        limit?: number;
-      } = { ascending: true };
-
-      const resolve = () => {
-        let data = [...rows.salaryRows] as { date?: string }[];
-        if (state.from) {
-          data = data.filter((row) => String(row.date) >= state.from!);
-        }
-        if (state.to) {
-          data = data.filter((row) => String(row.date) <= state.to!);
-        }
-        data.sort((a, b) =>
-          state.ascending
-            ? String(a.date).localeCompare(String(b.date))
-            : String(b.date).localeCompare(String(a.date)),
-        );
-        if (state.limit) data = data.slice(0, state.limit);
-        return { data, error: null };
-      };
-
-      const builder: SalaryBuilder = {
-        select: vi.fn(() => builder),
-        eq: vi.fn(() => builder),
-        gte: vi.fn((_column: string, value: string) => {
-          state.from = value;
-          return builder;
-        }),
-        lte: vi.fn((_column: string, value: string) => {
-          state.to = value;
-          return builder;
-        }),
-        order: vi.fn((_column: string, options: { ascending: boolean }) => {
-          state.ascending = options.ascending;
-          return builder;
-        }),
-        limit: vi.fn((value: number) => {
-          state.limit = value;
-          return Promise.resolve(resolve());
-        }),
-        then: (
-          onFulfilled?: (value: { data: unknown[]; error: null }) => unknown,
-        ) => Promise.resolve(resolve()).then(onFulfilled),
-      };
-
-      return builder;
-    }),
-  },
-}));
-
-import { resolveSummaryPeriod } from '../src/handlers/summaryPeriod';
-
-describe('resolveSummaryPeriod', () => {
-  it('resolves this_month from first day of current month through today', async () => {
-    vi.setSystemTime(new Date('2026-05-29T10:00:00.000Z'));
-
-    await expect(resolveSummaryPeriod('this_month', 'acc-1')).resolves.toEqual({
-      ok: true,
-      from: '2026-05-01',
-      to: '2026-05-29',
-      label: 'calendar',
-    });
-
-    vi.useRealTimers();
-  });
-
-  it('resolves latest salary_cycle from the month of the latest Gaji transaction', async () => {
-    vi.setSystemTime(new Date('2026-05-29T10:00:00.000Z'));
-    rows.salaryRows = [
-      { date: '2026-04-25', categories: { name: 'Gaji' } },
-      { date: '2026-05-25', categories: { name: 'Gaji' } },
-    ];
-
-    await expect(resolveSummaryPeriod('salary_cycle', 'acc-1')).resolves.toEqual({
-      ok: true,
-      from: '2026-05-25',
-      to: '2026-05-29',
-      label: 'salary_cycle',
-    });
-
-    vi.useRealTimers();
-    rows.salaryRows = [];
-  });
-
-  it('uses earliest Gaji in requested month and one day before latest Gaji in next month', async () => {
-    rows.salaryRows = [
-      { date: '2026-02-25', categories: { name: 'Gaji' } },
-      { date: '2026-02-28', categories: { name: 'Gaji' } },
-      { date: '2026-03-24', categories: { name: 'Gaji' } },
-      { date: '2026-03-27', categories: { name: 'Gaji' } },
-    ];
-
-    await expect(
-      resolveSummaryPeriod('salary_cycle', 'acc-1', {
-        salaryMonth: 2,
-        salaryYear: 2026,
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      from: '2026-02-25',
-      to: '2026-03-26',
-      label: 'salary_cycle',
-    });
-
-    rows.salaryRows = [];
-  });
-
-  it('uses today as salary_cycle end when next month has no Gaji yet', async () => {
-    vi.setSystemTime(new Date('2026-05-29T10:00:00.000Z'));
-    rows.salaryRows = [
-      { date: '2026-05-25', categories: { name: 'Gaji' } },
-      { date: '2026-05-28', categories: { name: 'Gaji' } },
-    ];
-
-    await expect(
-      resolveSummaryPeriod('salary_cycle', 'acc-1', {
-        salaryMonth: 5,
-        salaryYear: 2026,
-      }),
-    ).resolves.toEqual({
-      ok: true,
-      from: '2026-05-25',
-      to: '2026-05-29',
-      label: 'salary_cycle',
-    });
-
-    vi.useRealTimers();
-    rows.salaryRows = [];
-  });
-
-  it('returns salary_not_found when no Gaji income transaction exists', async () => {
-    rows.salaryRows = [{ date: '2026-05-01', categories: { name: 'Bonus' } }];
-
-    await expect(resolveSummaryPeriod('salary_cycle', 'acc-1')).resolves.toEqual({
-      ok: false,
-      reason: 'salary_not_found',
-    });
-
-    rows.salaryRows = [];
-  });
+import {beforeEach,afterEach,expect,it,vi} from 'vitest';
+const state=vi.hoisted(()=>({categories:[] as Record<string,unknown>[],transactions:[] as Record<string,unknown>[],failed:false}));
+vi.mock('../src/services/supabase',()=>({supabase:{from:(table:string)=>{
+  const filters:Array<(r:Record<string,unknown>)=>boolean>=[]; let ascending=true,limit=Infinity;
+  const result=()=>({data:(table==='categories'?state.categories:state.transactions).filter(r=>filters.every(f=>f(r))).sort((a,b)=>String(a.date).localeCompare(String(b.date))*(ascending?1:-1)).slice(0,limit),error:state.failed?{code:'08006'}:null});
+  const q={select:()=>q,eq:(k:string,v:unknown)=>{filters.push(r=>r[k]===v);return q;},gte:(k:string,v:string)=>{filters.push(r=>String(r[k])>=v);return q;},lte:(k:string,v:string)=>{filters.push(r=>String(r[k])<=v);return q;},order:(_k:string,o:{ascending:boolean})=>{ascending=o.ascending;return q;},limit:(n:number)=>{limit=n;return q;},maybeSingle:async()=>{const r=result();return {...r,data:r.data[0]??null};},then:(resolve:(r:unknown)=>unknown)=>Promise.resolve(result()).then(resolve)};
+  return q;
+}}}));
+import {resolveSummaryPeriod} from '../src/handlers/summaryPeriod';
+const account='10000000-0000-4000-8000-000000000001',salary='20000000-0000-4000-8000-000000000001',bonus='20000000-0000-4000-8000-000000000002';
+function markers(dates:string[],category_id=salary,account_id=account){return dates.map(date=>({date,category_id,account_id,type:'income'}));}
+beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(new Date('2026-04-15T03:00:00Z'));state.failed=false;state.categories=[{id:salary,account_id:account,code:'salary',type:'income',name_id:'Changed label',name_en:'Salary',is_active:false}];state.transactions=[];});
+afterEach(()=>vi.useRealTimers());
+it('keeps calendar as default and Jakarta today',async()=>{await expect(resolveSummaryPeriod('this_month',account)).resolves.toMatchObject({ok:true,from:'2026-04-01',to:'2026-04-15'});});
+it('uses earliest selected salary and latest following-month salary, never bonus',async()=>{
+ state.transactions=[...markers(['2026-03-27']),...markers(['2026-04-02'],bonus),...markers(['2026-04-06'])];
+ await expect(resolveSummaryPeriod('salary_cycle',account,{salaryMonth:3,salaryYear:2026})).resolves.toMatchObject({ok:true,from:'2026-03-27',to:'2026-04-05'});
+ state.transactions.push(...markers(['2026-04-10']));
+ await expect(resolveSummaryPeriod('salary_cycle',account,{salaryMonth:3,salaryYear:2026})).resolves.toMatchObject({ok:true,from:'2026-03-27',to:'2026-04-09'});
 });
+it('skipped following month ends today, not before May salary',async()=>{state.transactions=markers(['2026-03-27','2026-05-06']);await expect(resolveSummaryPeriod('salary_cycle',account,{salaryMonth:3,salaryYear:2026})).resolves.toMatchObject({ok:true,to:'2026-04-15'});});
+it('implicit selection uses latest regular salary month',async()=>{state.transactions=[...markers(['2026-03-27','2026-04-06']),...markers(['2026-04-14'],bonus)];await expect(resolveSummaryPeriod('salary_cycle',account)).resolves.toMatchObject({ok:true,from:'2026-04-06',to:'2026-04-15'});});
+it('bonus and foreign salary never satisfy missing selected month',async()=>{state.transactions=[...markers(['2026-03-27'],bonus),...markers(['2026-03-28'],salary,'10000000-0000-4000-8000-000000000002')];await expect(resolveSummaryPeriod('salary_cycle',account,{salaryMonth:3,salaryYear:2026})).resolves.toEqual({ok:false,reason:'salary_not_found'});});
+it.each([['2024-02-29','2024-03-05','2024-03-04',2,2024],['2025-12-27','2026-01-06','2026-01-05',12,2025]] as const)('preserves civil boundaries %s',async(from,next,to,salaryMonth,salaryYear)=>{state.transactions=markers([from,next]);await expect(resolveSummaryPeriod('salary_cycle',account,{salaryMonth,salaryYear})).resolves.toMatchObject({ok:true,from,to});});
+it('distinguishes dependency failure from missing salary',async()=>{state.failed=true;await expect(resolveSummaryPeriod('salary_cycle',account)).resolves.toEqual({ok:false,reason:'query_failed'});});

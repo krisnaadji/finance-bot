@@ -128,6 +128,7 @@ class Query implements PromiseLike<Result> {
     const result: Row = {};
     for (const column of this.columns.split(',').map((value) => value.trim())) {
       if (column === '*') Object.assign(result, row);
+      else if (column === 'amount::text') result.amount = row.amount == null ? row.amount : String(row.amount);
       else if (column === 'categories(name)' || column === 'categories!inner(name)') {
         const category = this.db.tables.categories.find((item) => item.id === row.category_id);
         result.categories = category ? { name: category.name } : null;
@@ -156,7 +157,9 @@ class Query implements PromiseLike<Result> {
       if (existing) { Object.assign(existing, this.values); selected = [existing]; }
       else {
         const id = `80000000-0000-4000-8000-${String(this.db.sequence++).padStart(12, '0')}`;
-        const row = { id, ...this.values }; rows.push(row); selected = [row];
+        if (this.table === 'categories' && rows.some(c=>c.account_id===this.values.account_id && c.type===this.values.type && c.parent_id===(this.values.parent_id ?? null) && c.is_active===true &&
+          ['name_id','name_en'].some(key=>typeof c[key]==='string' && typeof this.values[key]==='string' && String(c[key]).trim().toLowerCase()===String(this.values[key]).trim().toLowerCase()))) return {data:null,error:{code:'23505'}};
+        const row = {id,...(this.table === 'categories' ? {code:null,parent_id:null,name_id:null,name_en:null,sort_order:0} : {}),...this.values}; rows.push(row); selected = [row];
       }
     } else if (this.mode === 'update') selected.forEach((row) => Object.assign(row, this.values));
     else if (this.mode === 'delete') {
@@ -189,12 +192,12 @@ export const txnId = '30000000-0000-4000-8000-000000000001';
 export function seedSecurityDb(): SecurityDb {
   const db = new SecurityDb();
   db.tables.accounts = [{ id: accountId, name: 'Disposable account', type: 'group', wa_chat_id: 'test-group', language: 'en', owner_id: '90000000-0000-4000-8000-000000000001', is_active: true }];
-  db.tables.members = [{ id: '40000000-0000-4000-8000-000000000001', account_id: accountId, wa_phone: 'requester-A', display_name: 'A', language_pref: null }];
+  db.tables.members = [{id:'40000000-0000-4000-8000-000000000001',account_id:accountId,wa_phone:'requester-A',display_name:'A',language_pref:null,user_id:'90000000-0000-4000-8000-000000000001'}];
   db.tables.categories = [
-    { id: expenseId, account_id: accountId, name: 'Food', type: 'expense', is_active: true },
-    { id: incomeId, account_id: accountId, name: 'Tips', type: 'income', is_active: true },
-    { id: inactiveId, account_id: accountId, name: 'Old food', type: 'expense', is_active: false },
-    { id: foreignCategoryId, account_id: foreignAccountId, name: 'Foreign food', type: 'expense', is_active: true },
+    {id:expenseId,account_id:accountId,code:'expense.other',name_id:'Food',name_en:'Food',parent_id:null,type:'expense',is_custom:false,is_active:true,sort_order:0},
+    {id:incomeId,account_id:accountId,code:'income.other',name_id:'Tips',name_en:'Tips',parent_id:null,type:'income',is_custom:false,is_active:true,sort_order:1},
+    {id:inactiveId,account_id:accountId,code:null,name_id:'Old food',name_en:null,parent_id:null,type:'expense',is_custom:true,is_active:false,sort_order:2},
+    {id:foreignCategoryId,account_id:foreignAccountId,code:null,name_id:'Foreign food',name_en:null,parent_id:null,type:'expense',is_custom:true,is_active:true,sort_order:0},
   ];
   db.tables.transactions = [{ id: txnId, account_id: accountId, amount: '20.00', type: 'expense', description: 'Existing', date: '2026-10-12', category_id: expenseId, wa_bot_message_id: 'old-receipt' }];
   return db;
