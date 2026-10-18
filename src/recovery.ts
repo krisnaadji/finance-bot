@@ -1,8 +1,5 @@
 import { supabase } from './services/supabase';
-import { claimOutbound, freezeReply } from './delivery/repository';
-import { decodeReplySnapshot } from './delivery/types';
-import { dispatchClaim } from './delivery/dispatch';
-import { renderReply } from './delivery/render';
+import { dispatchOutbound } from './delivery/dispatch';
 import { logger } from './utils/logger';
 import { isRecord, isUuid } from './utils/financialValidation';
 import type { WorkerEnv } from './worker';
@@ -44,21 +41,8 @@ async function cleanupExpiredExports(): Promise<void> {
   }
 }
 
-async function dispatchOutbound(id: string): Promise<void> {
-  const { data, error } = await supabase.from('bot_outbound').select('text,reply_payload').eq('id', id).maybeSingle();
-  if (error || !data || !(data.text === null || typeof data.text === 'string')) {
-    throw new Error('outbound_load_unavailable');
-  }
-  if (data.text === null) {
-    const snapshot = decodeReplySnapshot(data.reply_payload);
-    await freezeReply(id, renderReply(snapshot));
-  }
-  const claim = await claimOutbound(id);
-  if (claim) await dispatchClaim(claim);
-}
-
 async function dispatchOutbounds(ids: string[]): Promise<void> {
-  await Promise.all(ids.map(dispatchOutbound));
+  for (const id of ids) await dispatchOutbound(id);
 }
 
 export async function recoverDueWork(env: WorkerEnv): Promise<void> {

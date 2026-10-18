@@ -3,6 +3,7 @@ import { buildPrompt } from './prompts';
 import type { Lang } from '../utils/lang';
 import type { Account, TxnForBot } from './types';
 import { parseFinancialJson } from '../utils/financialValidation';
+import { categoryColumns, decodeCategory, selectableCategories } from '../categories';
 
 export async function callGemini(
   message: string,
@@ -18,16 +19,13 @@ export async function callGemini(
 
   const { data: cats, error: categoryError } = await supabase
     .from('categories')
-    .select('name, type')
+    .select(categoryColumns)
     .eq('account_id', account.id)
-    .eq('is_active', true)
     .order('sort_order');
   if (categoryError || !Array.isArray(cats)) throw new Error('AI category lookup unavailable');
 
-  const categories = {
-    income: (cats ?? []).filter((c) => c.type === 'income').map((c) => c.name),
-    expense: (cats ?? []).filter((c) => c.type === 'expense').map((c) => c.name),
-  };
+  const rows = cats.map(c => decodeCategory(c,account.id));
+  const categories = [...selectableCategories(rows,'income'),...selectableCategories(rows,'expense')];
 
   const replyContext = replyTxn
     ? [

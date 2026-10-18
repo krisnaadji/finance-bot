@@ -3,7 +3,8 @@ import { sendWA } from '../services/whatsapp';
 import { formatIDR, formatDate } from '../utils/format';
 import { Lang } from '../utils/lang';
 import { Account, IncomingMessage } from '../ai/types';
-import { BotWriteError } from './transactionData';
+import { BotWriteError, canonicalTxn, categoryName, transactionColumns } from './transactionData';
+import { categoryColumns, decodeCategory } from '../categories';
 
 export async function searchTxn(
   query: string,
@@ -21,7 +22,7 @@ export async function searchReply(query: string, account: Account, lang: Lang): 
 
   const { data, error } = await supabase
     .from('transactions')
-    .select('*, categories(name)')
+    .select(transactionColumns)
     .eq('account_id', account.id)
     .ilike('description', `%${query}%`)
     .order('date', { ascending: false })
@@ -35,13 +36,17 @@ export async function searchReply(query: string, account: Account, lang: Lang): 
       ? `🔍 Tidak ada transaksi yang cocok dengan *"${query}"*`
       : `🔍 No transactions found for *"${query}"*`;
   }
+  const cats=await supabase.from('categories').select(categoryColumns).eq('account_id',account.id);
+  if(cats.error || !Array.isArray(cats.data)) throw new BotWriteError('dependency');
+  const categories=cats.data.map(c=>decodeCategory(c,account.id));
 
-  const lines = rows.map((t) => {
-    const sign = t.type === 'income' ? '+' : '-';
-    const cat = (t.categories as any)?.name ?? '—';
-    const amount = formatIDR(Number(t.amount));
-    const date = formatDate(t.date, lang);
-    return `${sign}Rp${amount} · ${t.description} · ${cat} · ${date}`;
+  const lines = rows.map((raw) => {
+    const txn=canonicalTxn(raw,account.id);
+    const sign = txn.type === 'income' ? '+' : '-';
+    const cat = categoryName(txn,categories,lang);
+    const amount = formatIDR(txn.amount);
+    const date = formatDate(txn.date, lang);
+    return `${sign}Rp${amount} · ${txn.description} · ${cat} · ${date}`;
   });
 
   const header =

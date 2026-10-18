@@ -260,7 +260,7 @@ it('account relink while provider is outstanding blocks the original chat write'
   expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.inactiveAccount);
 });
 it('shared-account participants retain create capability and individual attribution', async () => {
-  state.ai.mockResolvedValue({ action: 'CREATE_TRANSACTION', payload: { amount: '35', type: 'expense', date: '2026-10-12', category: 'Food' } });
+  state.ai.mockResolvedValue({action:'CREATE_TRANSACTION',payload:{amount:'35',type:'expense',date:'2026-10-12',category_id:expenseId}});
   await routeMessage({ ...base, rawFrom: 'requester-B' });
   expect(db.tables.transactions[1]).toMatchObject({ account_id: accountId, amount: '35.00', category_id: expenseId,
     recorded_by_name: 'requester-B', recorded_by_phone: 'requester-B' });
@@ -325,8 +325,8 @@ it.each([
 it('slash summary renders account-scoped report totals without foreign data', async () => {
   db.rpcResponses.finance_summary = {
     income: '0.00', expense: '20.00', net: '-20.00',
-    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
-    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+    categories:[{id:expenseId,name_id:'Food',name_en:'Food',amount:'20.00'}],
+    spendingByCategoryId:{[expenseId]:'20.00'},categoryDetails:[],byMonth:{},topExpenses:[],topIncomes:[],
   };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
   db.tables.transactions.push({ ...db.tables.transactions[0], id: '30000000-0000-4000-8000-000000000002',
@@ -367,8 +367,8 @@ it('help reply executes an RPC-backed summary without provider classification', 
   db.rpcResponses.load_bot_help_context = true;
   db.rpcResponses.finance_summary = {
     income: '0.00', expense: '20.00', net: '-20.00',
-    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
-    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+    categories:[{id:expenseId,name_id:'Food',name_en:'Food',amount:'20.00'}],
+    spendingByCategoryId:{[expenseId]:'20.00'},categoryDetails:[],byMonth:{},topExpenses:[],topIncomes:[],
   };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
   state.sendWA.mockResolvedValueOnce(accepted('help-prompt'));
@@ -382,11 +382,11 @@ it('help reply executes an RPC-backed summary without provider classification', 
 it('salary slash summary retains requested-month marker selection on persisted history', async () => {
   db.rpcResponses.finance_summary = {
     income: '100.00', expense: '20.00', net: '80.00',
-    categories: [{ id: expenseId, name: 'Food', amount: '20.00' }],
-    spendingByCategoryId: { [expenseId]: '20.00' }, byMonth: {}, topExpenses: [], topIncomes: [],
+    categories:[{id:expenseId,name_id:'Food',name_en:'Food',amount:'20.00'}],
+    spendingByCategoryId:{[expenseId]:'20.00'},categoryDetails:[],byMonth:{},topExpenses:[],topIncomes:[],
   };
   vi.setSystemTime(new Date('2026-10-12T10:00:00Z'));
-  db.tables.categories.find((row) => row.id === incomeId)!.name = 'Gaji';
+  Object.assign(db.tables.categories.find(row=>row.id===incomeId)!,{code:'salary',name_id:'Gaji',name_en:'Salary'});
   db.tables.transactions = [
     { ...db.tables.transactions[0], date: '2026-09-26' },
     { ...db.tables.transactions[0], id: '30000000-0000-4000-8000-000000000002', type: 'income', amount: '100.00',
@@ -406,6 +406,7 @@ it('salary slash summary retains requested-month marker selection on persisted h
   } });
 });
 it('salary marker read outage is a dependency failure, not missing salary', async () => {
+  Object.assign(db.tables.categories.find(row => row.id === incomeId)!, { code: 'salary' });
   db.failures.push({ table: 'transactions', mode: 'read' });
   await routeMessage({ ...base, text: '/summary salary' });
   expect(state.sendWA.mock.calls.at(-1)?.[1]).toBe(t.en.dependencyUnavailable);

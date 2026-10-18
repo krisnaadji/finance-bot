@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { localSupabase } from './helpers/localSupabase';
-import { applyPhase2MigrationsThrough, closeFixture, seedLinkedFixture, sql } from './helpers/phase2Db';
+import { initializePhase3Fixture, closeFixture, seedPhase3LinkedFixture as seedLinkedFixture, sql } from './helpers/phase3Db';
 import type { Fixture } from './helpers/phase2Db';
 
 const state = vi.hoisted(() => ({ ai: vi.fn<(...args: unknown[]) => Promise<unknown>>(), dispatch: vi.fn() }));
@@ -23,18 +23,20 @@ vi.mock('../../src/services/supabase', () => ({
   },
 }));
 vi.mock('../../src/ai', () => ({ callAI: state.ai }));
-vi.mock('../../src/delivery/dispatch', () => ({ dispatchClaim: state.dispatch }));
+vi.mock('../../src/services/whatsapp', () => ({ sendWA: state.dispatch }));
 
 import { businessDate, shiftCivilDay } from '../../src/utils/businessDate';
 import { claimInbox, ingest } from '../../src/intake/repository';
 import { commitCommand, saveCommand } from '../../src/processing/commit';
 import { processInbox } from '../../src/processing/processor';
 import { recoverDueWork } from '../../src/recovery';
-import { claimOutbound, freezeReply, settleOutbound } from '../../src/delivery/repository';
-import type { OutboundClaim } from '../../src/delivery/types';
+import { claimOutbound, freezeReply } from '../../src/delivery/repository';
 
-beforeAll(() => applyPhase2MigrationsThrough('202610130006_export_snapshots.sql'));
-beforeEach(() => vi.clearAllMocks());
+beforeAll(initializePhase3Fixture);
+beforeEach(() => {
+  vi.clearAllMocks();
+  state.dispatch.mockImplementation(async () => ({ kind: 'accepted', providerMessageId: randomUUID() }));
+});
 afterAll(closeFixture);
 
 function delivery(f: Fixture, text: string, messageId = randomUUID(), chatId = f.chatId) {
@@ -62,13 +64,10 @@ it('replays a committed message without another transaction or logical receipt',
     return {
       action: 'CREATE_TRANSACTION',
       payload: {
-        amount: '10000.00', type: 'expense', category: 'Makanan', description: 'dinner',
+        amount: '10000.00', type: 'expense', category_id: f.categoryId, description: 'dinner',
         date: shiftCivilDay(businessDate(instant), -1),
       },
     };
-  });
-  state.dispatch.mockImplementation(async (claim: OutboundClaim) => {
-    await settleOutbound(claim, { kind: 'accepted', providerMessageId: `fixture-provider-${claim.id}` });
   });
   const message = delivery(f, 'kemarin makan 10000');
   const id = (await ingest([message])).ids[0];
@@ -125,15 +124,13 @@ it('freezes and dispatches a due outbox task but holds an expired sending lease 
   const sending = (await claimOutbound(interrupted.outboundId))!;
   await sql("update public.bot_outbound set lease_until=clock_timestamp()-interval '1 second' where id=$1", [interrupted.outboundId]);
   const queueSend = vi.fn().mockResolvedValue(undefined);
-  state.dispatch.mockImplementation(async (claim: OutboundClaim) => {
-    await settleOutbound(claim, { kind: 'accepted', providerMessageId: `fixture-provider-${claim.id}` });
-  });
 
   await recoverDueWork({ BOT_QUEUE: { send: queueSend } } as never);
 
   expect(queueSend).not.toHaveBeenCalled();
   expect(state.dispatch).toHaveBeenCalledTimes(1);
-  expect(state.dispatch.mock.calls[0][0].id).toBe(due.outboundId);
+  expect(state.dispatch.mock.calls[0][1]).toBe('recover this reply');
+  expect((await sql<{state:string}>('select state from public.bot_outbound where id=$1', [due.outboundId]))[0].state).toBe('accepted');
   const [row] = await sql<{ state: string; diagnostic_code: string | null }>(
     'select state,diagnostic_code from public.bot_outbound where id=$1', [interrupted.outboundId],
   );

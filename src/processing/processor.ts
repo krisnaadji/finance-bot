@@ -1,9 +1,7 @@
 import { supabase } from '../services/supabase';
 import { claimInbox, failInbox, renewInbox } from '../intake/repository';
 import type { InboxClaim } from '../intake/types';
-import { claimOutbound, freezeReply } from '../delivery/repository';
-import { dispatchClaim } from '../delivery/dispatch';
-import { renderReply } from '../delivery/render';
+import { dispatchOutbound } from '../delivery/dispatch';
 import { commitCommand, decodeCommitResult, saveCommand } from './commit';
 import { prepareMessage } from './prepare';
 import type { CommitResult } from './types';
@@ -52,15 +50,6 @@ async function renewBeforeWrite(claim: InboxClaim, beat: InboxHeartbeat): Promis
   beat.assertHealthy();
 }
 
-async function dispatchOutbound(id: string): Promise<void> {
-  const { data, error } = await supabase.from('bot_outbound').select('text,reply_payload').eq('id', id).maybeSingle();
-  if (error || !data || !(data.text === null || typeof data.text === 'string')) {
-    throw new Error('outbound_load_unavailable');
-  }
-  if (data.text === null) await freezeReply(id, renderReply(data.reply_payload));
-  const claim = await claimOutbound(id);
-  if (claim) await dispatchClaim(claim);
-}
 
 async function dispatchOutbounds(ids: string[]): Promise<void> {
   for (const id of ids) await dispatchOutbound(id);

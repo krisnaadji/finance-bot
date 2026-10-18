@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -27,18 +27,23 @@ import { summaryReply } from '../src/handlers/getSummary';
 import { budgetWarnings } from '../src/handlers/transactionData';
 import { decodeFinanceSummary } from '../src/services/reporting';
 import { t } from '../src/i18n/bot';
+import type { Category } from '../src/categories';
 
 const accountId = '10000000-0000-4000-8000-000000000001';
 const categoryOne = '20000000-0000-4000-8000-000000000001';
 const categoryTwo = '20000000-0000-4000-8000-000000000002';
 const transactionId = '30000000-0000-4000-8000-000000000001';
 const account = { id: accountId } as never;
+const category:Category={id:categoryOne,account_id:accountId,code:'expense.food',name_id:'Food',name_en:'Food',parent_id:null,type:'expense',is_active:true,is_custom:false,sort_order:0};
 
 beforeEach(() => {
   state.rpc.mockReset();
   state.budgets = [];
   state.warn.mockReset();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-14T12:00:00Z'));
 });
+afterEach(()=>vi.useRealTimers());
 
 it('renders exact summary values and keeps same-named categories distinct by identity', async () => {
   state.rpc.mockResolvedValue({ data: {
@@ -46,13 +51,14 @@ it('renders exact summary values and keeps same-named categories distinct by ide
     expense: '0.30',
     net: '9999999999999.71',
     categories: [
-      { id: categoryOne, name: 'Food', amount: '0.10' },
-      { id: categoryTwo, name: 'Food', amount: '0.20' },
-      { id: null, name: 'Other', amount: '0.00' },
+      {id:categoryOne,name_id:'Food',name_en:'Food',amount:'0.10'},
+      {id:categoryTwo,name_id:'Food',name_en:'Food',amount:'0.20'},
+      {id:null,name_id:null,name_en:null,amount:'0.00'},
     ],
     spendingByCategoryId: { [categoryOne]: '0.10', [categoryTwo]: '0.20' },
+    categoryDetails:[{parentId:categoryOne,categoryId:categoryOne,amount:'0.10'}],
     byMonth: { '2026-10': { income: '10000000000000.01', expense: '0.30' } },
-    topExpenses: [{ id: transactionId, date: '2026-10-14', description: 'Snack', amount: '0.20', category: 'Food' }],
+    topExpenses:[{id:transactionId,date:'2026-10-14',description:'Snack',amount:'0.20',categories:category,parent:null}],
     topIncomes: [],
   }, error: null });
 
@@ -75,6 +81,17 @@ it('rejects malformed summary RPC output at runtime', () => {
   expect(() => decodeFinanceSummary({ income: 1 })).toThrow('invalid_finance_summary');
 });
 
+it('keeps bilingual child metadata and rejects incomplete or mismatched parent projections',()=>{
+  const child={...category,id:categoryTwo,parent_id:category.id,code:null,name_id:'Makan',name_en:'Dining'};
+  const top={id:transactionId,date:'2026-10-14',description:'meal',amount:'0.20',categories:child,parent:category};
+  const summary={income:'0.00',expense:'0.20',net:'-0.20',categories:[{id:category.id,name_id:category.name_id,name_en:category.name_en,amount:'0.20'}],categoryDetails:[{parentId:category.id,categoryId:child.id,amount:'0.20'}],spendingByCategoryId:{[category.id]:'0.20'},byMonth:{},topExpenses:[top],topIncomes:[]};
+  expect(decodeFinanceSummary(summary).topExpenses[0]).toMatchObject({category:child,parent:category});
+  expect(decodeFinanceSummary({...summary,categories:summary.categories.map(c=>({...c,name:'Legacy label'})),
+    topExpenses:[{...top,category:'Legacy label'}]})).toEqual(decodeFinanceSummary(summary));
+  expect(()=>decodeFinanceSummary({...summary,topExpenses:[{...top,parent:null}]})).toThrow();
+  expect(()=>decodeFinanceSummary({...summary,topExpenses:[{...top,parent:{...category,account_id:'10000000-0000-4000-8000-000000000099'}}]})).toThrow();
+});
+
 it('uses exact Jakarta-month budget spending from one aggregate RPC', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-14T18:00:00Z'));
@@ -83,7 +100,7 @@ it('uses exact Jakarta-month budget spending from one aggregate RPC', async () =
   const warning = await budgetWarnings([{
     id: transactionId, account_id: accountId, amount: '0.01', type: 'expense',
     date: '2026-10-15', description: 'Snack', category_id: categoryOne,
-  }], [{ id: categoryOne, account_id: accountId, name: 'Food', type: 'expense', is_active: true }], accountId, 'en');
+  }], [category], accountId, 'en');
   vi.useRealTimers();
 
   expect(warning).toContain('Rp9.999.999.999.999,99 / Rp9.999.999.999.999,98 (100%)');
@@ -99,7 +116,7 @@ it('keeps warning-query failure optional and logs only the account identifier', 
   const warning = await budgetWarnings([{
     id: transactionId, account_id: accountId, amount: '90.00', type: 'expense',
     date: '2026-10-14', description: 'Private details', category_id: categoryOne,
-  }], [{ id: categoryOne, account_id: accountId, name: 'Food', type: 'expense', is_active: true }], accountId, 'en');
+  }], [category], accountId, 'en');
 
   expect(warning).toBe('\n\n' + t.en.budgetWarningUnavailable);
   expect(state.warn).toHaveBeenCalledWith('transactions', 'budget_warning_unavailable', { accountId });

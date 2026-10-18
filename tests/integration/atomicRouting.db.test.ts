@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { localSupabase } from './helpers/localSupabase';
-import { applyPhase2Migrations, closeFixture, seedLinkedFixture, sql } from './helpers/phase2Db';
+import { initializePhase3Fixture, closeFixture, seedPhase3LinkedFixture as seedLinkedFixture, sql } from './helpers/phase3Db';
 import type { Fixture } from './helpers/phase2Db';
 const state=vi.hoisted(()=>({ai:vi.fn<(...args:unknown[])=>Promise<unknown>>()}));
 vi.mock('../../src/services/supabase',()=>({supabase:{from:(table:string)=>localSupabase.from(table),rpc:(name:string,args:Record<string,unknown>)=>localSupabase.rpc(name,args)}}));
@@ -10,7 +10,7 @@ import { prepareMessage } from '../../src/processing/prepare';
 import { ingest, claimInbox } from '../../src/intake/repository';
 import { saveCommand, commitCommand } from '../../src/processing/commit';
 import type { InboxClaim } from '../../src/intake/types';
-beforeAll(()=>{vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true');return applyPhase2Migrations();});
+beforeAll(()=>{vi.stubEnv('DELETE_CONFIRMATIONS_ENABLED','true');return initializePhase3Fixture();});
 afterAll(async()=>{vi.unstubAllEnvs();await closeFixture();});
 async function intake(f:Fixture,text:string,repliedToId:string|null=null):Promise<InboxClaim> {
   const {ids}=await ingest([{gateway:'meta',messageId:randomUUID(),chatId:f.chatId,rawFrom:f.requester,text,repliedToId,
@@ -24,7 +24,7 @@ async function run(claim:InboxClaim) {
 }
 it('delete item two then edit original item three without redirecting the selection', async()=>{
   const f=await seedLinkedFixture();
-  state.ai.mockResolvedValue({action:'CREATE_MULTIPLE',payload:{},transactions:[1,2,3].map(n=>({amount:`${n*10}.00`,type:'expense',category:'Makanan',description:`item ${n}`,date:'2026-10-13'}))});
+  state.ai.mockResolvedValue({action:'CREATE_MULTIPLE',payload:{},transactions:[1,2,3].map(n=>({amount:`${n*10}.00`,type:'expense',category_id:f.categoryId,description:`item ${n}`,date:'2026-10-13'}))});
   const first=await intake(f,'three meals');
   const result=await run(first);
   await sql('delete from public.transactions where id=$1',[result.transactionIds[1]]);

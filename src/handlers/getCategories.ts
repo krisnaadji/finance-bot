@@ -3,6 +3,7 @@ import { sendWA } from '../services/whatsapp';
 import { Lang } from '../utils/lang';
 import { Account, IncomingMessage } from '../ai/types';
 import { BotWriteError } from './transactionData';
+import { categoryColumns, categoryPath, decodeCategory, selectableCategories } from '../categories';
 
 export async function getCategories(
   account: Account,
@@ -15,19 +16,15 @@ export async function getCategories(
 export async function categoriesReply(account: Account, lang: Lang): Promise<string> {
   const { data: cats, error } = await supabase
     .from('categories')
-    .select('name, type')
+    .select(categoryColumns)
     .eq('account_id', account.id)
-    .eq('is_active', true)
     .order('type')
     .order('sort_order');
   if (error || !Array.isArray(cats)) throw new BotWriteError('dependency');
 
-  const income = (cats ?? [])
-    .filter((c) => c.type === 'income')
-    .map((c) => '  • ' + c.name);
-  const expense = (cats ?? [])
-    .filter((c) => c.type === 'expense')
-    .map((c) => '  • ' + c.name);
+  const rows=cats.map(c=>decodeCategory(c,account.id));
+  const income=selectableCategories(rows,'income').map(c=>'  • '+categoryPath(c,rows,lang));
+  const expense=selectableCategories(rows,'expense').map(c=>'  • '+categoryPath(c,rows,lang));
 
   const reply =
     lang === 'id'

@@ -1,5 +1,6 @@
 import { supabase } from '../services/supabase';
 import { businessDate, calendarMonth, currentMonthRange, shiftCivilDay } from '../utils/businessDate';
+import { isBusinessDate, isRecord, isUuid } from '../utils/financialValidation';
 
 export type SummaryPeriod =
   | 'this_month'
@@ -49,10 +50,6 @@ function nextMonth(month: number, year: number): { month: number; year: number }
   return { month: nextMonth, year: nextYear };
 }
 
-function isGajiRow(row: SalaryRow): boolean {
-  const name = (row.categories as any)?.name;
-  return typeof name === 'string' && name.toLowerCase() === 'gaji' && !!row.date;
-}
 
 async function fetchSalaryRows(
   accountId: string,
@@ -63,13 +60,12 @@ async function fetchSalaryRows(
     limit?: number;
   },
 ): Promise<{ rows: SalaryRow[]; error: unknown }> {
-  let query = supabase
-    .from('transactions')
-    .select('date, categories!inner(name)')
-    .eq('account_id', accountId)
-    .eq('type', 'income')
-    .eq('categories.name', 'Gaji')
-    .order('date', { ascending: options.ascending });
+  const salary=await supabase.from('categories').select('id').eq('account_id',accountId).eq('code','salary').eq('type','income').maybeSingle();
+  if (salary.error) return {rows:[],error:salary.error};
+  if (salary.data === null) return {rows:[],error:null};
+  if (!isUuid(salary.data.id)) return {rows:[],error:new Error('Invalid salary identity')};
+  let query = supabase.from('transactions').select('date').eq('account_id',accountId)
+    .eq('type','income').eq('category_id',salary.data.id).order('date',{ascending:options.ascending});
 
   if (options.from) query = query.gte('date', options.from);
   if (options.to) query = query.lte('date', options.to);
@@ -77,7 +73,8 @@ async function fetchSalaryRows(
 
   const { data, error } = await query;
   if (error || !Array.isArray(data)) return { rows: [], error: error ?? new Error('Salary lookup unavailable') };
-  return { rows: (data as SalaryRow[]).filter(isGajiRow), error: null };
+  if (data.some(row=>!isRecord(row)||!isBusinessDate(row.date))) return {rows:[],error:new Error('Invalid salary date')};
+  return {rows:data as SalaryRow[],error:null};
 }
 
 export async function resolveSummaryPeriod(

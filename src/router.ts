@@ -8,7 +8,7 @@ import { t } from './i18n/bot';
 import { IncomingMessage, AIResponse, Account, PendingAction, TxnForBot } from './ai/types';
 import { isRecord, isUuid } from './utils/financialValidation';
 import { validateAIResponse, InvalidAICommand } from './ai/validation';
-import { BotWriteError, BotDeliveryError, assertActiveLinkedAccount, canonicalTxn, transactionColumns } from './handlers/transactionData';
+import { BotWriteError, BotDeliveryError, assertActiveLinkedAccount, canonicalTxn, categoryName, transactionColumns } from './handlers/transactionData';
 import {
   helpShortcutHint,
   loadHelpContext,
@@ -30,6 +30,7 @@ import {
   setup,
   searchTxn,
 } from './handlers';
+import { categoryColumns, decodeCategory } from './categories';
 
 // ── DB helpers ────────────────────────────────────────────────────
 async function getAccountByChatId(chatId: string): Promise<Account | null> {
@@ -72,17 +73,18 @@ async function getPendingForReply(accountId: string, chatId: string, confirmatio
     expires_at: value.expires_at, confirmation_message_id: value.confirmation_message_id };
 }
 
-async function findTxnByReply(messageId: string, accountId: string): Promise<TxnForBot | null> {
+async function findTxnByReply(messageId: string, accountId: string, lang: Lang): Promise<TxnForBot | null> {
   for (const column of ['wa_bot_message_id', 'wa_user_message_id']) {
-    const result = await supabase.from('transactions').select(transactionColumns + ',categories(name)')
+    const result = await supabase.from('transactions').select(transactionColumns)
       .eq('account_id', accountId).eq(column, messageId).maybeSingle();
     if (result.error) throw new BotWriteError('dependency');
     if (result.data) {
       const raw: unknown = result.data;
       const txn = canonicalTxn(raw, accountId);
-      const category = isRecord(raw) && isRecord(raw.categories) ? raw.categories : null;
-      return { id: txn.id, description: txn.description, amount: txn.amount, date: txn.date,
-        category_name: typeof category?.name === 'string' ? category.name : '' };
+      const cats=await supabase.from('categories').select(categoryColumns).eq('account_id',accountId);
+      if(cats.error || !Array.isArray(cats.data)) throw new BotWriteError('dependency');
+      return {id:txn.id,description:txn.description,amount:txn.amount,date:txn.date,
+        category_name:categoryName(txn,cats.data.map(c=>decodeCategory(c,accountId)),lang)};
     }
   }
   return null;
@@ -258,7 +260,7 @@ async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => 
     // Check if multiple transactions share this message ID
     const { data: multiples, error: multipleError } = await supabase
       .from('transactions')
-      .select('*, categories(name)')
+      .select(transactionColumns)
       .eq('account_id', account.id)
       .eq('wa_bot_message_id', msg.repliedToId)
       .order('created_at');
@@ -306,10 +308,9 @@ async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => 
       if (isDelete && selIdx) {
         const raw = multiples[selIdx - 1];
         if (raw) {
-          const txn = {
-            ...raw,
-            category_name: (raw.categories as { name?: string } | null)?.name ?? t[lang].uncategorized,
-          };
+          const cats=await supabase.from('categories').select(categoryColumns).eq('account_id',account.id);
+          if(cats.error || !Array.isArray(cats.data)) throw new BotWriteError('dependency');
+          const txn = {...raw,category_name:categoryName(canonicalTxn(raw,account.id),cats.data.map(c=>decodeCategory(c,account.id)),lang)};
           return deleteTxn(txn, account, msg, lang);
         }
       }
@@ -317,7 +318,7 @@ async function routeMessageInner(msg: IncomingMessage, setLang: (lang: Lang) => 
     }
 
     // Single transaction reply — existing flow
-    const txn = await findTxnByReply(msg.repliedToId, account.id);
+    const txn = await findTxnByReply(msg.repliedToId, account.id, lang);
     if (txn) {
       const ai = await checkedAI(text, account, lang, txn);
       if (ai.action === 'EDIT_TRANSACTION')
