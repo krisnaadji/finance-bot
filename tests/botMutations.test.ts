@@ -150,11 +150,16 @@ it('empty provider receipt ID never binds a transaction and never repeats the in
   expect(db.tables.transactions[1].wa_bot_message_id).toBeUndefined();
 });
 it('budget lookup outage appends a warning limitation to an honest committed receipt', async () => {
-  db.failures.push({ table: 'budgets', mode: 'read' });
-  await createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en');
-  expect(db.tables.transactions[1]).toMatchObject({ amount: '35.50', wa_bot_message_id: 'new-receipt' });
-  expect(state.sendWA.mock.calls[0][1]).toContain('Rp35,50');
-  expect(state.sendWA.mock.calls[0][1]).toContain(t.en.budgetWarningUnavailable);
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-20T05:00:00Z') });
+  try {
+    db.failures.push({ table: 'budgets', mode: 'read' });
+    await createTxn({ action: 'CREATE_TRANSACTION', payload }, account, msg, 'en');
+    expect(db.tables.transactions[1]).toMatchObject({ amount: '35.50', wa_bot_message_id: 'new-receipt' });
+    expect(state.sendWA.mock.calls[0][1]).toContain('Rp35,50');
+    expect(state.sendWA.mock.calls[0][1]).toContain(t.en.budgetWarningUnavailable);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it('a category insert sends a receipt from the saved name/type', async () => {
   await addCategory({action:'ADD_CATEGORY',payload:{category_name:' Travel ',category_type:'expense',category_language:'en'}},account,msg,'en');
