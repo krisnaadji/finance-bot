@@ -19,7 +19,7 @@ const app = new Hono<{ Bindings: Partial<WorkerEnv> }>();
 async function acceptVerifiedBody(body: unknown, env: Partial<WorkerEnv>, selectedGateway: 'meta' | 'fonnte'): Promise<void> {
   const deliveries = await normalizeDeliveries(selectedGateway, body, new Date().toISOString());
   if (!deliveries.length) return;
-  const { ids, conflicts } = await ingest(deliveries);
+  const { ids } = await ingest(deliveries);
   if (ids.length && !env.BOT_QUEUE) {
     logger.error('webhook', 'queue_binding_missing', undefined, { count: ids.length });
     return;
