@@ -4,6 +4,11 @@ export class InvalidAICommand extends Error {
   constructor() { super('Invalid AI command'); this.name = 'InvalidAICommand'; }
 }
 function reject(): never { throw new InvalidAICommand(); }
+function isCategoryLabel(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const label = value.trim();
+  return label.length > 0 && [...label].length <= 120 && !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label);
+}
 function txnType(value: unknown): 'income' | 'expense' {
   if (typeof value !== 'string') return reject();
   switch (value.trim().toLowerCase()) {
@@ -56,10 +61,10 @@ export function validateAIResponse(value: unknown): AIResponse {
       break;
     case 'ADD_CATEGORY':
       if (!isRecord(raw) || Object.keys(raw).some((key) => !['category_name','category_type','category_language','parent_category_id','translated_name'].includes(key)) ||
-          typeof raw.category_name !== 'string' || !raw.category_name.trim() || [...raw.category_name.trim()].length > 120 ||
+          !isCategoryLabel(raw.category_name) ||
           (raw.category_language !== 'id' && raw.category_language !== 'en') ||
           (raw.parent_category_id !== undefined && raw.parent_category_id !== null && !isUuid(raw.parent_category_id)) ||
-          (raw.translated_name !== undefined && raw.translated_name !== null && (typeof raw.translated_name !== 'string' || !raw.translated_name.trim() || [...raw.translated_name.trim()].length > 120))) return reject();
+          (raw.translated_name !== undefined && raw.translated_name !== null && !isCategoryLabel(raw.translated_name))) return reject();
       payload = {category_name:raw.category_name.trim(),category_type:txnType(raw.category_type),category_language:raw.category_language,
         ...(raw.parent_category_id !== undefined ? {parent_category_id:raw.parent_category_id as string|null} : {}),
         ...(typeof raw.translated_name === 'string' ? {translated_name:raw.translated_name.trim()} : {})}; break;

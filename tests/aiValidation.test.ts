@@ -35,6 +35,12 @@ describe('AI command validation', () => {
     expect(validateAIResponse({ action: 'DROP_ALL', payload: item, transactions: [item], reply: 'hello' }))
       .toEqual({ action: 'UNKNOWN', payload: {}, reply: 'hello' });
   });
+  it.each(['Food\nDrinks', 'Food\u200bDrinks', 'Food\u2028Drinks'])('rejects unsupported characters in either category label %j', (label) => {
+    const payload = { category_name: 'Food', category_type: 'expense', category_language: 'en', translated_name: 'Makanan' };
+    for (const key of ['category_name', 'translated_name']) {
+      expect(() => validateAIResponse({ action: 'ADD_CATEGORY', payload: { ...payload, [key]: label } })).toThrow(InvalidAICommand);
+    }
+  });
   it.each([0, -1, 1.5, '1'])('rejects non-positive/non-integer selections %j', (selection_index) => {
     expect(() => validateAIResponse({ action: 'DELETE_FROM_MULTIPLE', payload: {}, selection_index })).toThrow(InvalidAICommand);
   });
